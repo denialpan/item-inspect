@@ -19,6 +19,7 @@ import org.lwjgl.glfw.GLFW;
 // This class will not load on dedicated servers. Accessing client side code from here is safe.
 @Mod(value = iteminspect.MODID, dist = Dist.CLIENT)
 public class iteminspectClient {
+    private static int lastSelectedHotbarSlot = -1;
     private static final KeyMapping PLAY_VIEWMODEL_ANIMATION = new KeyMapping(
             "key.iteminspect.play_viewmodel_animation",
             InputConstants.Type.KEYSYM,
@@ -54,6 +55,14 @@ public class iteminspectClient {
 
     static void onClientTick(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player != null) {
+            int selectedHotbarSlot = minecraft.player.getInventory().selected;
+            if (lastSelectedHotbarSlot != -1 && selectedHotbarSlot != lastSelectedHotbarSlot) {
+                ViewmodelPose.INSTANCE.cancelAnimation();
+            }
+            lastSelectedHotbarSlot = selectedHotbarSlot;
+        }
+
         if (minecraft.options.keyAttack.isDown() || minecraft.options.keyUse.isDown()) {
             ViewmodelPose.INSTANCE.cancelAnimation();
             return;
