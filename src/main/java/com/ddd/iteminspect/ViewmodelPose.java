@@ -6,6 +6,7 @@ import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.PoseStack;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.io.IOException;
 import java.io.Reader;
 import java.util.List;
@@ -22,17 +23,24 @@ import org.joml.Vector3f;
 public final class ViewmodelPose implements ResourceManagerReloadListener {
     public static final ViewmodelPose INSTANCE = new ViewmodelPose();
     private static final ResourceLocation POSE_LOCATION = ResourceLocation.fromNamespaceAndPath(iteminspect.MODID, "viewmodel/default_pose.json");
+    private static final int RESTART_BLEND_TICKS = 4;
 
+    private Transform viewmodelCamera = Transform.identity();
     private Transform itemRoot = Transform.identity();
     private Transform blockRoot = Transform.identity();
     private Transform viewmodelArmR = Transform.identity();
     private Transform viewmodelArmL = Transform.identity();
     private Animation animation = Animation.empty();
+    private EnumMap<Bone, Transform> restartBlendFrom = new EnumMap<>(Bone.class);
     private int animationTick;
     private boolean playing;
     private boolean loaded;
 
     private ViewmodelPose() {
+    }
+
+    public Transform viewmodelCamera(float partialTick) {
+        return this.currentTransform(Bone.VIEWMODEL_CAMERA, this.viewmodelCamera, partialTick);
     }
 
     public Transform itemRoot() {
@@ -89,6 +97,12 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     public void restartAnimation() {
         if (!this.animation.isEmpty()) {
+            this.restartBlendFrom.clear();
+            if (this.playing) {
+                for (Bone bone : Bone.values()) {
+                    this.restartBlendFrom.put(bone, this.currentTransformWithoutRestartBlend(bone, this.bindFallback(bone), 0.0F));
+                }
+            }
             this.animationTick = 0;
             this.playing = true;
         }
@@ -97,6 +111,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     public void cancelAnimation() {
         this.animationTick = 0;
         this.playing = false;
+        this.restartBlendFrom.clear();
     }
 
     public void tickAnimation() {
@@ -108,15 +123,47 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         if (this.animationTick >= this.animation.length()) {
             this.animationTick = this.animation.length() - 1;
             this.playing = false;
+            this.restartBlendFrom.clear();
         }
     }
 
     private Transform currentTransform(Bone bone, Transform fallback, float partialTick) {
+        Transform transform = this.currentTransformWithoutRestartBlend(bone, fallback, partialTick);
+        if (this.restartBlendFrom.isEmpty()) {
+            return transform;
+        }
+
+        float alpha = Math.min((this.animationTick + partialTick) / RESTART_BLEND_TICKS, 1.0F);
+        if (alpha >= 1.0F) {
+            return transform;
+        }
+
+        Transform from = this.restartBlendFrom.getOrDefault(bone, fallback);
+        return Transform.lerp(from, transform, smoothStep(alpha));
+    }
+
+    private Transform currentTransformWithoutRestartBlend(Bone bone, Transform fallback, float partialTick) {
         if (!this.playing || this.animation.isEmpty()) {
             return fallback;
         }
 
         return this.animation.sample(bone, this.animationTick + partialTick, fallback);
+    }
+
+    private Transform bindFallback(Bone bone) {
+        return switch (bone) {
+            case VIEWMODEL_CAMERA -> this.viewmodelCamera;
+            case ITEM_ROOT -> this.itemRoot;
+            case BLOCK_ROOT -> this.blockRoot;
+            case VIEWMODEL_ARM_R -> this.viewmodelArmR;
+            case VIEWMODEL_ARM_L -> this.viewmodelArmL;
+            case LEFT_ITEM_ROOT -> this.itemRoot.leftHandItemTransform(this.itemRoot);
+            case LEFT_BLOCK_ROOT -> this.blockRoot.mirroredTransform();
+        };
+    }
+
+    private static float smoothStep(float value) {
+        return value * value * (3.0F - 2.0F * value);
     }
 
     @Override
@@ -139,13 +186,15 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private void loadFromJson(JsonObject root, String source) {
         try {
             JsonObject bones = GsonHelper.getAsJsonObject(root, "bones");
+            this.viewmodelCamera = readOptionalBone(bones, "viewmodel_camera", Transform.identity());
             this.itemRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "item_root"));
             this.blockRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "block_root"));
             this.viewmodelArmR = Transform.read(GsonHelper.getAsJsonObject(bones, "viewmodel_arm_R"));
             this.viewmodelArmL = readOptionalBone(bones, "viewmodel_arm_L", this.viewmodelArmR.mirroredTransform());
-            this.animation = Animation.read(root, this.itemRoot, this.blockRoot, this.viewmodelArmR, this.viewmodelArmL);
+            this.animation = Animation.read(root, this.viewmodelCamera, this.itemRoot, this.blockRoot, this.viewmodelArmR, this.viewmodelArmL);
             this.playing = false;
             this.animationTick = 0;
+            this.restartBlendFrom.clear();
             this.loaded = true;
             iteminspect.LOGGER.info("Loaded viewmodel pose {} with {} animation frame(s)", source, this.animation.length());
         } catch (RuntimeException exception) {
@@ -155,6 +204,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     private void clear() {
+            this.viewmodelCamera = Transform.identity();
             this.itemRoot = Transform.identity();
             this.blockRoot = Transform.identity();
             this.viewmodelArmR = Transform.identity();
@@ -162,6 +212,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.animation = Animation.empty();
             this.playing = false;
             this.animationTick = 0;
+            this.restartBlendFrom.clear();
             this.loaded = false;
     }
 
@@ -200,6 +251,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             poseStack.translate(this.tx, this.ty, this.tz);
             poseStack.mulPose(new Quaternionf(this.qx, this.qy, this.qz, this.qw));
             poseStack.scale(this.sx, this.sy, this.sz);
+        }
+
+        public void applyInverse(PoseStack poseStack) {
+            Matrix4f inverse = this.toMatrix().invert();
+            poseStack.mulPose(inverse);
         }
 
         public void apply(PoseStack poseStack, boolean mirrorX) {
@@ -305,6 +361,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     private enum Bone {
+        VIEWMODEL_CAMERA("viewmodel_camera"),
         ITEM_ROOT("item_root"),
         BLOCK_ROOT("block_root"),
         VIEWMODEL_ARM_R("viewmodel_arm_R"),
@@ -328,7 +385,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             return new Animation(false, List.of());
         }
 
-        public static Animation read(JsonObject root, Transform itemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
+        public static Animation read(JsonObject root, Transform cameraBind, Transform itemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
             if (!root.has("animations")) {
                 return empty();
             }
@@ -343,7 +400,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             JsonArray frameArray = GsonHelper.getAsJsonArray(animationJson, "frames");
             List<AnimationFrame> frames = new ArrayList<>(frameArray.size());
             for (JsonElement element : frameArray) {
-                frames.add(AnimationFrame.read(element.getAsJsonObject(), itemBind, blockBind, rightArmBind, leftArmBind));
+                frames.add(AnimationFrame.read(element.getAsJsonObject(), cameraBind, itemBind, blockBind, rightArmBind, leftArmBind));
             }
             frames.sort(Comparator.comparingInt(AnimationFrame::frame));
             return frames.isEmpty() ? empty() : new Animation(loop, List.copyOf(frames));
@@ -379,6 +436,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     private record AnimationFrame(
             int frame,
+            Transform viewmodelCamera,
             Transform itemRoot,
             Transform blockRoot,
             Transform viewmodelArmR,
@@ -386,8 +444,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             Transform leftItemRoot,
             Transform leftBlockRoot
     ) {
-        public static AnimationFrame read(JsonObject json, Transform itemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
+        public static AnimationFrame read(JsonObject json, Transform cameraBind, Transform itemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
             JsonObject bones = GsonHelper.getAsJsonObject(json, "bones");
+            Transform viewmodelCamera = readBone(bones, Bone.VIEWMODEL_CAMERA);
             Transform itemRoot = readBone(bones, Bone.ITEM_ROOT);
             Transform blockRoot = readBone(bones, Bone.BLOCK_ROOT);
             Transform viewmodelArmR = readBone(bones, Bone.VIEWMODEL_ARM_R);
@@ -396,6 +455,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             Transform effectiveBlockRoot = blockRoot == null ? blockBind : blockRoot;
             return new AnimationFrame(
                     GsonHelper.getAsInt(json, "frame", 0),
+                    viewmodelCamera,
                     itemRoot,
                     blockRoot,
                     viewmodelArmR,
@@ -407,6 +467,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
         public Transform transformOrFallback(Bone bone, Transform fallback) {
             Transform transform = switch (bone) {
+                case VIEWMODEL_CAMERA -> this.viewmodelCamera;
                 case ITEM_ROOT -> this.itemRoot;
                 case BLOCK_ROOT -> this.blockRoot;
                 case VIEWMODEL_ARM_R -> this.viewmodelArmR;

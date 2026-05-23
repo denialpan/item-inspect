@@ -35,6 +35,7 @@ DEFAULT_ANIMATION_NAME = "default"
 AUTHORING_TO_MINECRAFT_MATRIX = Matrix.Rotation(math.radians(-90.0), 4, "X")
 
 EXPORT_SOURCES = {
+    "viewmodel_camera": None,
     "item_root": "held_item_transform_anchor_firstperson_righthand",
     "block_root": "held_block_transform_anchor_firstperson_righthand",
     "viewmodel_arm_R": "viewmodel_arm_R_transform_anchor",
@@ -42,13 +43,14 @@ EXPORT_SOURCES = {
 }
 
 ANIMATION_SOURCES = {
+    "viewmodel_camera": None,
     "item_root": "held_item_transform_anchor_firstperson_righthand_display",
     "block_root": "held_block_transform_anchor_firstperson_righthand_display",
     "viewmodel_arm_R": "viewmodel_arm_R_transform_anchor_display",
     "viewmodel_arm_L": "viewmodel_arm_L_transform_anchor_display",
 }
 
-EXPORT_POSE_BONE_NAMES = {"item_root", "viewmodel_arm_R", "viewmodel_arm_L"}
+EXPORT_POSE_BONE_NAMES = {"viewmodel_camera", "item_root", "viewmodel_arm_R", "viewmodel_arm_L"}
 
 
 def evaluated_matrix_world(obj: bpy.types.Object):
@@ -57,6 +59,9 @@ def evaluated_matrix_world(obj: bpy.types.Object):
 
 
 def matrix_from_named_source(name: str, source: str | None):
+    if name == "viewmodel_camera":
+        return matrix_from_pose_bone_delta(name)
+
     if source is not None:
         obj = bpy.data.objects.get(source)
         if obj is not None:
@@ -84,7 +89,25 @@ def matrix_from_pose_bone(name: str, convert_to_minecraft: bool = True):
     return matrix
 
 
+def matrix_from_pose_bone_delta(name: str):
+    armature = find_viewmodel_armature()
+    if armature is None:
+        raise RuntimeError("Select the viewmodel armature in Object Mode before exporting.")
+    if armature.pose is None or name not in armature.pose.bones or name not in armature.data.bones:
+        return None
+
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    armature_eval = armature.evaluated_get(depsgraph)
+    pose_matrix = armature_eval.pose.bones[name].matrix.copy()
+    rest_matrix = armature.data.bones[name].matrix_local.copy()
+    delta_matrix = pose_matrix @ rest_matrix.inverted()
+    return AUTHORING_TO_MINECRAFT_MATRIX @ delta_matrix @ AUTHORING_TO_MINECRAFT_MATRIX.inverted()
+
+
 def matrix_for_animation_sample(name: str, source: str | None):
+    if name == "viewmodel_camera":
+        return matrix_from_pose_bone_delta(name)
+
     animation_source = ANIMATION_SOURCES.get(name)
     if animation_source is not None:
         obj = bpy.data.objects.get(animation_source)
@@ -188,7 +211,7 @@ def detect_last_keyframe() -> int | None:
     if armature is None:
         raise RuntimeError("Select the viewmodel armature in Object Mode before exporting.")
 
-    # Constraint influence keys live under pose.bones["viewmodel_arm_R"].
+    # Constraint influence keys live under pose.bones["viewmodel_arm_R"] and ["viewmodel_arm_L"].
     # Only the active action on this armature defines the exported timeline;
     # stale/unassigned actions and helper-object keys are intentionally ignored.
     last = object_last_keyframe(armature, filter_pose_bones=True)

@@ -150,6 +150,12 @@ def create_viewmodel_armature(item_transform: Matrix, right_arm_transform: Matri
     camera_bone.head = (0.0, 0.0, 0.0)
     camera_bone.tail = (0.0, 0.0, -0.35)
 
+    viewmodel_camera = armature_data.edit_bones.new("viewmodel_camera")
+    viewmodel_camera.head = (0.0, 0.0, 0.0)
+    viewmodel_camera.tail = (0.0, 0.35, 0.0)
+    viewmodel_camera.parent = camera_bone
+    viewmodel_camera.use_connect = False
+
     right_arm_head = right_arm_transform.to_translation()
     right_arm_dir = right_arm_transform.to_3x3() @ Vector((0.0, 0.35, 0.0))
     right_viewmodel_arm = armature_data.edit_bones.new("viewmodel_arm_R")
@@ -340,7 +346,7 @@ def create_scene() -> None:
     add_wire_frustum(camera, 70.0, 16.0 / 9.0, 2.0)
 
     viewmodel_armature = create_viewmodel_armature(item_anchor_matrix, arm_matrix, left_arm_matrix)
-    parent_object_to_bone_preserve_world(camera, viewmodel_armature, "camera")
+    parent_object_to_bone_preserve_world(camera, viewmodel_armature, "viewmodel_camera")
     bind_mesh_to_bone(stick_proxy, viewmodel_armature, "item_root")
     bind_mesh_to_bone(block_proxy, viewmodel_armature, "item_root")
     bind_mesh_to_bone(right_arm_base, viewmodel_armature, "viewmodel_arm_R")
@@ -374,7 +380,8 @@ def create_scene() -> None:
         "the arm transform is the idle empty-main-hand path from ItemInHandRenderer.renderPlayerArm. "
         "The held item/block export empties are neutral hand-space anchors. "
         "Preview-only child empties simulate minecraft:item/handheld and minecraft:block/block first-person display transforms. "
-        "The armature hierarchy is camera -> item_root, camera -> viewmodel_arm_R, and camera -> viewmodel_arm_L, "
+        "The armature hierarchy is camera -> viewmodel_camera, camera -> item_root, camera -> viewmodel_arm_R, and camera -> viewmodel_arm_L. "
+        "viewmodel_camera is a visual camera offset control for export; the real Blender camera is parented to it for authoring preview. "
         "with both viewmodel arms constrained Child Of item_root. "
         "Item/block proxy meshes are weighted to item_root; arm and sleeve meshes are weighted to their matching viewmodel arm bones. "
         "No custom mod renderer exists in src/main/java, so this is vanilla 1.21.1 behavior."
