@@ -12,9 +12,9 @@ The exporter writes decomposed TRS data. The Minecraft renderer applies each
 transform as translate -> quaternion rotation -> scale.
 
 Animation export:
-    - auto-detects the last keyframed frame in the scene/action data
-    - samples every integer frame from scene.frame_start through that last frame
-    - prefers animated pose bones for frame samples
+    - uses the selected armature object's active action as the exported rig
+    - samples every integer frame from Blender frame 1 through that last frame
+    - samples evaluated dependency-graph matrices so pose constraints are included
     - keeps the static "bones" pose from the hidden Minecraft-space export anchors
 """
 
@@ -46,27 +46,39 @@ ANIMATION_SOURCES = {
     "viewmodel_arm_R": "viewmodel_arm_R_transform_anchor_display",
 }
 
-BONE_TO_EXPORT_SOURCE = {bone: source for bone, source in EXPORT_SOURCES.items()}
+EXPORT_POSE_BONE_NAMES = {"item_root", "viewmodel_arm_R"}
+
+
+def evaluated_matrix_world(obj: bpy.types.Object):
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    return obj.evaluated_get(depsgraph).matrix_world.copy()
 
 
 def matrix_from_named_source(name: str, source: str):
     obj = bpy.data.objects.get(source)
     if obj is not None:
-        return obj.matrix_world.copy()
+        return evaluated_matrix_world(obj)
 
-    armature = bpy.data.objects.get("viewmodel_armature")
+    armature = find_viewmodel_armature()
     if armature is not None and armature.pose and name in armature.pose.bones:
-        return armature.matrix_world @ armature.pose.bones[name].matrix
+        return matrix_from_pose_bone(name, convert_to_minecraft=False)
 
     raise RuntimeError(f"Could not find export source object '{source}' or pose bone '{name}'.")
 
 
-def matrix_from_pose_bone(name: str):
-    armature = bpy.data.objects.get("viewmodel_armature")
-    if armature is None or armature.pose is None or name not in armature.pose.bones:
+def matrix_from_pose_bone(name: str, convert_to_minecraft: bool = True):
+    armature = find_viewmodel_armature()
+    if armature is None:
+        raise RuntimeError("Select the viewmodel armature in Object Mode before exporting.")
+    if armature.pose is None or name not in armature.pose.bones:
         return None
 
-    return AUTHORING_TO_MINECRAFT_MATRIX @ armature.matrix_world @ armature.pose.bones[name].matrix
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    armature_eval = armature.evaluated_get(depsgraph)
+    matrix = armature_eval.matrix_world @ armature_eval.pose.bones[name].matrix
+    if convert_to_minecraft:
+        matrix = AUTHORING_TO_MINECRAFT_MATRIX @ matrix
+    return matrix
 
 
 def matrix_for_animation_sample(name: str, source: str):
@@ -74,7 +86,7 @@ def matrix_for_animation_sample(name: str, source: str):
     if animation_source is not None:
         obj = bpy.data.objects.get(animation_source)
         if obj is not None:
-            return AUTHORING_TO_MINECRAFT_MATRIX @ obj.matrix_world
+            return AUTHORING_TO_MINECRAFT_MATRIX @ evaluated_matrix_world(obj)
 
     pose_matrix = matrix_from_pose_bone(name)
     if pose_matrix is not None:
@@ -93,17 +105,12 @@ def trs_from_matrix(matrix):
 
 
 def frame_range_from_args() -> tuple[int, int | None]:
-    start = bpy.context.scene.frame_start
+    start = 1
     end = None
     if "--" not in sys.argv:
         return start, end
 
     args = sys.argv[sys.argv.index("--") + 1 :]
-    if "--start" in args:
-        index = args.index("--start")
-        if index + 1 >= len(args):
-            raise RuntimeError("--start requires a frame number.")
-        start = int(args[index + 1])
     if "--end" in args:
         index = args.index("--end")
         if index + 1 >= len(args):
@@ -132,7 +139,7 @@ def keyed_id_matches_export_bone(data_path: str) -> bool:
         return False
 
     if data_path.startswith("pose.bones["):
-        return any(name in data_path for name in BONE_TO_EXPORT_SOURCE)
+        return any(f'pose.bones["{name}"]' in data_path for name in EXPORT_POSE_BONE_NAMES)
 
     return False
 
@@ -159,35 +166,33 @@ def object_last_keyframe(obj, filter_pose_bones: bool = False) -> float | None:
     if animation_data.action is not None:
         last = action_last_keyframe(animation_data.action, filter_pose_bones)
 
-    if animation_data.nla_tracks:
-        for track in animation_data.nla_tracks:
-            for strip in track.strips:
-                last = strip.frame_end if last is None else max(last, strip.frame_end)
-
     return last
 
 
-def detect_last_keyframe() -> int | None:
-    candidates: list[float] = []
-
-    armature = bpy.data.objects.get("viewmodel_armature")
-    if armature is not None:
-        last = object_last_keyframe(armature, filter_pose_bones=True)
-        if last is not None:
-            candidates.append(last)
-
-    for source in set(EXPORT_SOURCES.values()) | set(ANIMATION_SOURCES.values()):
-        obj = bpy.data.objects.get(source)
-        if obj is None:
-            continue
-        last = object_last_keyframe(obj)
-        if last is not None:
-            candidates.append(last)
-
-    if not candidates:
+def find_viewmodel_armature() -> bpy.types.Object | None:
+    selected_armatures = [obj for obj in bpy.context.selected_objects if obj.type == "ARMATURE"]
+    if len(selected_armatures) > 1:
+        names = ", ".join(obj.name for obj in selected_armatures)
+        raise RuntimeError(f"Expected one selected armature, but found {len(selected_armatures)}: {names}")
+    if not selected_armatures:
         return None
 
-    return int(math.ceil(max(candidates)))
+    return selected_armatures[0]
+
+
+def detect_last_keyframe() -> int | None:
+    armature = find_viewmodel_armature()
+    if armature is None:
+        raise RuntimeError("Select the viewmodel armature in Object Mode before exporting.")
+
+    # Constraint influence keys live under pose.bones["viewmodel_arm_R"].
+    # Only the active action on this armature defines the exported timeline;
+    # stale/unassigned actions and helper-object keys are intentionally ignored.
+    last = object_last_keyframe(armature, filter_pose_bones=True)
+    if last is None:
+        return None
+
+    return int(math.ceil(last))
 
 
 def export_animation(start_frame: int, end_frame: int):
@@ -264,6 +269,7 @@ def main() -> None:
     if end_frame is None:
         print("No keyed animation data detected; exported static pose only.")
     else:
+        print(f"Detected last keyframe {detected_end_frame}.")
         print(f"Exported animation frames {start_frame}..{end_frame}.")
 
 

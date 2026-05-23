@@ -150,6 +150,14 @@ def create_viewmodel_armature(item_transform: Matrix, arm_transform: Matrix) -> 
     camera_bone.head = (0.0, 0.0, 0.0)
     camera_bone.tail = (0.0, 0.0, -0.35)
 
+    arm_head = arm_transform.to_translation()
+    arm_dir = arm_transform.to_3x3() @ Vector((0.0, 0.35, 0.0))
+    viewmodel_arm = armature_data.edit_bones.new("viewmodel_arm_R")
+    viewmodel_arm.head = arm_head
+    viewmodel_arm.tail = arm_head + arm_dir.normalized() * 0.35
+    viewmodel_arm.parent = camera_bone
+    viewmodel_arm.use_connect = False
+
     item_head = item_transform.to_translation()
     item_dir = item_transform.to_3x3() @ Vector((0.0, 0.25, 0.0))
     item_root = armature_data.edit_bones.new("item_root")
@@ -158,15 +166,12 @@ def create_viewmodel_armature(item_transform: Matrix, arm_transform: Matrix) -> 
     item_root.parent = camera_bone
     item_root.use_connect = False
 
-    arm_head = arm_transform.to_translation()
-    arm_dir = arm_transform.to_3x3() @ Vector((0.0, 0.35, 0.0))
-    viewmodel_arm = armature_data.edit_bones.new("viewmodel_arm_R")
-    viewmodel_arm.head = arm_head
-    viewmodel_arm.tail = arm_head + arm_dir.normalized() * 0.35
-    viewmodel_arm.parent = item_root
-    viewmodel_arm.use_connect = False
-
     bpy.ops.object.mode_set(mode="OBJECT")
+    constraint = armature.pose.bones["viewmodel_arm_R"].constraints.new(type="CHILD_OF")
+    constraint.name = "Child Of item_root"
+    constraint.target = armature
+    constraint.subtarget = "item_root"
+    constraint.inverse_matrix = armature.pose.bones["item_root"].matrix.inverted() @ armature.pose.bones["viewmodel_arm_R"].matrix
     armature.show_in_front = True
     return armature
 
@@ -341,7 +346,7 @@ def create_scene() -> None:
         "the arm transform is the idle empty-main-hand path from ItemInHandRenderer.renderPlayerArm. "
         "The held item/block export empties are neutral hand-space anchors. "
         "Preview-only child empties simulate minecraft:item/handheld and minecraft:block/block first-person display transforms. "
-        "The armature hierarchy is camera -> item_root -> viewmodel_arm_R. "
+        "The armature hierarchy is camera -> item_root and camera -> viewmodel_arm_R, with viewmodel_arm_R constrained Child Of item_root. "
         "Item/block proxy meshes are weighted to item_root; arm and sleeve are weighted to viewmodel_arm_R. "
         "No custom mod renderer exists in src/main/java, so this is vanilla 1.21.1 behavior."
     )
