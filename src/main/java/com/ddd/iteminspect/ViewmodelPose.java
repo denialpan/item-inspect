@@ -9,7 +9,6 @@ import java.util.Comparator;
 import java.io.IOException;
 import java.io.Reader;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
@@ -121,7 +120,15 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
 
         try (Reader reader = resource.get().openAsReader()) {
-            JsonObject root = GsonHelper.parse(reader);
+            this.loadFromJson(GsonHelper.parse(reader), POSE_LOCATION.toString());
+        } catch (IOException | RuntimeException exception) {
+            iteminspect.LOGGER.error("Failed to load viewmodel pose {}", POSE_LOCATION, exception);
+            this.clear();
+        }
+    }
+
+    private void loadFromJson(JsonObject root, String source) {
+        try {
             JsonObject bones = GsonHelper.getAsJsonObject(root, "bones");
             this.itemRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "item_root"));
             this.blockRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "block_root"));
@@ -130,9 +137,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.playing = false;
             this.animationTick = 0;
             this.loaded = true;
-            iteminspect.LOGGER.info("Loaded viewmodel pose {} with {} animation frame(s)", POSE_LOCATION, this.animation.length());
-        } catch (IOException | RuntimeException exception) {
-            iteminspect.LOGGER.error("Failed to load viewmodel pose {}", POSE_LOCATION, exception);
+            iteminspect.LOGGER.info("Loaded viewmodel pose {} with {} animation frame(s)", source, this.animation.length());
+        } catch (RuntimeException exception) {
+            iteminspect.LOGGER.error("Failed to parse viewmodel pose {}", source, exception);
+            this.clear();
+        }
+    }
+
+    private void clear() {
             this.itemRoot = Transform.identity();
             this.blockRoot = Transform.identity();
             this.viewmodelArmR = Transform.identity();
@@ -140,7 +152,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.playing = false;
             this.animationTick = 0;
             this.loaded = false;
-        }
     }
 
     public record Transform(float tx, float ty, float tz, float qx, float qy, float qz, float qw, float sx, float sy, float sz) {
