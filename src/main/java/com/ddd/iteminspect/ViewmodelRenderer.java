@@ -34,21 +34,26 @@ public final class ViewmodelRenderer {
         event.setCanceled(true);
 
         boolean leftMainHand = minecraft.player.getMainArm() == HumanoidArm.LEFT;
-        poseStack.pushPose();
-        if (leftMainHand) {
-            pose.leftViewmodelArmR(event.getPartialTick()).apply(poseStack);
-        } else {
-            pose.viewmodelArmR(event.getPartialTick()).apply(poseStack);
-        }
         EntityRenderer<?> renderer = minecraft.getEntityRenderDispatcher().getRenderer(minecraft.player);
         if (renderer instanceof PlayerRenderer playerRenderer) {
+            poseStack.pushPose();
             if (leftMainHand) {
-                playerRenderer.renderLeftHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
+                pose.viewmodelArmL(event.getPartialTick()).mirroredTransform().apply(poseStack);
             } else {
-                playerRenderer.renderRightHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
+                pose.viewmodelArmR(event.getPartialTick()).apply(poseStack);
             }
+            playerRenderer.renderRightHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
+            poseStack.popPose();
+
+            poseStack.pushPose();
+            if (leftMainHand) {
+                pose.viewmodelArmR(event.getPartialTick()).mirroredTransform().apply(poseStack);
+            } else {
+                pose.viewmodelArmL(event.getPartialTick()).apply(poseStack);
+            }
+            playerRenderer.renderLeftHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
+            poseStack.popPose();
         }
-        poseStack.popPose();
 
         if (!stack.isEmpty()) {
             poseStack.pushPose();

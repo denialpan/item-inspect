@@ -137,7 +137,7 @@ def add_export_empty(name: str, minecraft_transform: Matrix, display_size: float
     return obj
 
 
-def create_viewmodel_armature(item_transform: Matrix, arm_transform: Matrix) -> bpy.types.Object:
+def create_viewmodel_armature(item_transform: Matrix, right_arm_transform: Matrix, left_arm_transform: Matrix) -> bpy.types.Object:
     armature_data = bpy.data.armatures.new("viewmodel_armature")
     armature_data.display_type = "STICK"
     armature = bpy.data.objects.new("viewmodel_armature", armature_data)
@@ -150,13 +150,21 @@ def create_viewmodel_armature(item_transform: Matrix, arm_transform: Matrix) -> 
     camera_bone.head = (0.0, 0.0, 0.0)
     camera_bone.tail = (0.0, 0.0, -0.35)
 
-    arm_head = arm_transform.to_translation()
-    arm_dir = arm_transform.to_3x3() @ Vector((0.0, 0.35, 0.0))
-    viewmodel_arm = armature_data.edit_bones.new("viewmodel_arm_R")
-    viewmodel_arm.head = arm_head
-    viewmodel_arm.tail = arm_head + arm_dir.normalized() * 0.35
-    viewmodel_arm.parent = camera_bone
-    viewmodel_arm.use_connect = False
+    right_arm_head = right_arm_transform.to_translation()
+    right_arm_dir = right_arm_transform.to_3x3() @ Vector((0.0, 0.35, 0.0))
+    right_viewmodel_arm = armature_data.edit_bones.new("viewmodel_arm_R")
+    right_viewmodel_arm.head = right_arm_head
+    right_viewmodel_arm.tail = right_arm_head + right_arm_dir.normalized() * 0.35
+    right_viewmodel_arm.parent = camera_bone
+    right_viewmodel_arm.use_connect = False
+
+    left_arm_head = left_arm_transform.to_translation()
+    left_arm_dir = left_arm_transform.to_3x3() @ Vector((0.0, 0.35, 0.0))
+    left_viewmodel_arm = armature_data.edit_bones.new("viewmodel_arm_L")
+    left_viewmodel_arm.head = left_arm_head
+    left_viewmodel_arm.tail = left_arm_head + left_arm_dir.normalized() * 0.35
+    left_viewmodel_arm.parent = camera_bone
+    left_viewmodel_arm.use_connect = False
 
     item_head = item_transform.to_translation()
     item_dir = item_transform.to_3x3() @ Vector((0.0, 0.25, 0.0))
@@ -167,11 +175,12 @@ def create_viewmodel_armature(item_transform: Matrix, arm_transform: Matrix) -> 
     item_root.use_connect = False
 
     bpy.ops.object.mode_set(mode="OBJECT")
-    constraint = armature.pose.bones["viewmodel_arm_R"].constraints.new(type="CHILD_OF")
-    constraint.name = "Child Of item_root"
-    constraint.target = armature
-    constraint.subtarget = "item_root"
-    constraint.inverse_matrix = armature.pose.bones["item_root"].matrix.inverted() @ armature.pose.bones["viewmodel_arm_R"].matrix
+    for bone_name in ("viewmodel_arm_R", "viewmodel_arm_L"):
+        constraint = armature.pose.bones[bone_name].constraints.new(type="CHILD_OF")
+        constraint.name = "Child Of item_root"
+        constraint.target = armature
+        constraint.subtarget = "item_root"
+        constraint.inverse_matrix = armature.pose.bones["item_root"].matrix.inverted() @ armature.pose.bones[bone_name].matrix
     armature.show_in_front = True
     return armature
 
@@ -227,30 +236,46 @@ def create_scene() -> None:
     bsdf.inputs["Alpha"].default_value = 0.38
     sleeve.blend_method = "BLEND"
 
-    # Vanilla idle values: right main hand, empty ItemStack, no swing, equip progress 0.
-    f = 1.0
+    # Vanilla idle values: empty ItemStack, no swing, equip progress 0.
+    right_f = 1.0
     hand_matrix = Matrix.Identity(4)
-    hand_matrix @= mat_translate(f * 0.64000005, -0.6, -0.71999997)
-    hand_matrix @= mat_rot_y(f * 45.0)
-    hand_matrix @= mat_translate(f * -1.0, 3.6, 3.5)
-    hand_matrix @= mat_rot_z(f * 120.0)
+    hand_matrix @= mat_translate(right_f * 0.64000005, -0.6, -0.71999997)
+    hand_matrix @= mat_rot_y(right_f * 45.0)
+    hand_matrix @= mat_translate(right_f * -1.0, 3.6, 3.5)
+    hand_matrix @= mat_rot_z(right_f * 120.0)
     hand_matrix @= mat_rot_x(200.0)
-    hand_matrix @= mat_rot_y(f * -135.0)
-    hand_matrix @= mat_translate(f * 5.6, 0.0, 0.0)
+    hand_matrix @= mat_rot_y(right_f * -135.0)
+    hand_matrix @= mat_translate(right_f * 5.6, 0.0, 0.0)
+
+    left_f = -1.0
+    left_hand_matrix = Matrix.Identity(4)
+    left_hand_matrix @= mat_translate(left_f * 0.64000005, -0.6, -0.71999997)
+    left_hand_matrix @= mat_rot_y(left_f * 45.0)
+    left_hand_matrix @= mat_translate(left_f * -1.0, 3.6, 3.5)
+    left_hand_matrix @= mat_rot_z(left_f * 120.0)
+    left_hand_matrix @= mat_rot_x(200.0)
+    left_hand_matrix @= mat_rot_y(left_f * -135.0)
+    left_hand_matrix @= mat_translate(left_f * 5.6, 0.0, 0.0)
 
     # ModelPart.translateAndRotate for the wide right arm: PartPose.offset(-5, 2, 0).
     right_arm_part = mat_translate(-5.0 * PIXEL, 2.0 * PIXEL, 0.0)
     arm_matrix = hand_matrix @ right_arm_part
+    left_arm_part = mat_translate(5.0 * PIXEL, 2.0 * PIXEL, 0.0)
+    left_arm_matrix = left_hand_matrix @ left_arm_part
 
     # Minecraft applies this transform before PlayerRenderer.renderRightHand(), which then applies
     # the right_arm ModelPart offset internally.
     add_export_empty("viewmodel_arm_R_transform_anchor", hand_matrix)
     arm_anchor = add_empty("viewmodel_arm_R_transform_anchor_display", BLENDER_AUTHORING_MATRIX @ hand_matrix, 0.12)
+    left_arm_anchor = add_empty("viewmodel_arm_L_transform_anchor_display", BLENDER_AUTHORING_MATRIX @ left_hand_matrix, 0.12)
     arm_matrix = BLENDER_AUTHORING_MATRIX @ arm_matrix
+    left_arm_matrix = BLENDER_AUTHORING_MATRIX @ left_arm_matrix
     right_arm_base = add_box("right_arm_base_wide", (-3.0, -2.0, -2.0), (4.0, 12.0, 4.0), arm_matrix, skin)
+    left_arm_base = add_box("left_arm_base_wide", (-1.0, -2.0, -2.0), (4.0, 12.0, 4.0), left_arm_matrix, skin)
 
-    # PlayerModel wide right sleeve uses CubeDeformation.extend(0.25).
+    # PlayerModel wide sleeves use CubeDeformation.extend(0.25).
     right_sleeve = add_box("right_sleeve_outer_wide", (-3.25, -2.25, -2.25), (4.5, 12.5, 4.5), arm_matrix, sleeve)
+    left_sleeve = add_box("left_sleeve_outer_wide", (-1.25, -2.25, -2.25), (4.5, 12.5, 4.5), left_arm_matrix, sleeve)
 
     # Vanilla held item path for a right main hand, no swing, equip progress 0:
     #   ItemInHandRenderer.renderArmWithItem
@@ -314,12 +339,14 @@ def create_scene() -> None:
     bpy.context.scene.camera = camera
     add_wire_frustum(camera, 70.0, 16.0 / 9.0, 2.0)
 
-    viewmodel_armature = create_viewmodel_armature(item_anchor_matrix, arm_matrix)
+    viewmodel_armature = create_viewmodel_armature(item_anchor_matrix, arm_matrix, left_arm_matrix)
     parent_object_to_bone_preserve_world(camera, viewmodel_armature, "camera")
     bind_mesh_to_bone(stick_proxy, viewmodel_armature, "item_root")
     bind_mesh_to_bone(block_proxy, viewmodel_armature, "item_root")
     bind_mesh_to_bone(right_arm_base, viewmodel_armature, "viewmodel_arm_R")
     bind_mesh_to_bone(right_sleeve, viewmodel_armature, "viewmodel_arm_R")
+    bind_mesh_to_bone(left_arm_base, viewmodel_armature, "viewmodel_arm_L")
+    bind_mesh_to_bone(left_sleeve, viewmodel_armature, "viewmodel_arm_L")
     parent_object_to_bone_preserve_world(item_anchor, viewmodel_armature, "item_root")
     parent_object_to_bone_preserve_world(item_preview_anchor, viewmodel_armature, "item_root")
     parent_object_to_bone_preserve_world(item_baked_origin, viewmodel_armature, "item_root")
@@ -327,6 +354,7 @@ def create_scene() -> None:
     parent_object_to_bone_preserve_world(block_preview_anchor, viewmodel_armature, "item_root")
     parent_object_to_bone_preserve_world(block_baked_origin, viewmodel_armature, "item_root")
     parent_object_to_bone_preserve_world(arm_anchor, viewmodel_armature, "viewmodel_arm_R")
+    parent_object_to_bone_preserve_world(left_arm_anchor, viewmodel_armature, "viewmodel_arm_L")
 
     light = bpy.data.objects.new("viewmodel inspection light", bpy.data.lights.new("viewmodel inspection light", "AREA"))
     bpy.context.collection.objects.link(light)
@@ -346,8 +374,9 @@ def create_scene() -> None:
         "the arm transform is the idle empty-main-hand path from ItemInHandRenderer.renderPlayerArm. "
         "The held item/block export empties are neutral hand-space anchors. "
         "Preview-only child empties simulate minecraft:item/handheld and minecraft:block/block first-person display transforms. "
-        "The armature hierarchy is camera -> item_root and camera -> viewmodel_arm_R, with viewmodel_arm_R constrained Child Of item_root. "
-        "Item/block proxy meshes are weighted to item_root; arm and sleeve are weighted to viewmodel_arm_R. "
+        "The armature hierarchy is camera -> item_root, camera -> viewmodel_arm_R, and camera -> viewmodel_arm_L, "
+        "with both viewmodel arms constrained Child Of item_root. "
+        "Item/block proxy meshes are weighted to item_root; arm and sleeve meshes are weighted to their matching viewmodel arm bones. "
         "No custom mod renderer exists in src/main/java, so this is vanilla 1.21.1 behavior."
     )
 

@@ -38,15 +38,17 @@ EXPORT_SOURCES = {
     "item_root": "held_item_transform_anchor_firstperson_righthand",
     "block_root": "held_block_transform_anchor_firstperson_righthand",
     "viewmodel_arm_R": "viewmodel_arm_R_transform_anchor",
+    "viewmodel_arm_L": None,
 }
 
 ANIMATION_SOURCES = {
     "item_root": "held_item_transform_anchor_firstperson_righthand_display",
     "block_root": "held_block_transform_anchor_firstperson_righthand_display",
     "viewmodel_arm_R": "viewmodel_arm_R_transform_anchor_display",
+    "viewmodel_arm_L": "viewmodel_arm_L_transform_anchor_display",
 }
 
-EXPORT_POSE_BONE_NAMES = {"item_root", "viewmodel_arm_R"}
+EXPORT_POSE_BONE_NAMES = {"item_root", "viewmodel_arm_R", "viewmodel_arm_L"}
 
 
 def evaluated_matrix_world(obj: bpy.types.Object):
@@ -54,14 +56,15 @@ def evaluated_matrix_world(obj: bpy.types.Object):
     return obj.evaluated_get(depsgraph).matrix_world.copy()
 
 
-def matrix_from_named_source(name: str, source: str):
-    obj = bpy.data.objects.get(source)
-    if obj is not None:
-        return evaluated_matrix_world(obj)
+def matrix_from_named_source(name: str, source: str | None):
+    if source is not None:
+        obj = bpy.data.objects.get(source)
+        if obj is not None:
+            return evaluated_matrix_world(obj)
 
     armature = find_viewmodel_armature()
     if armature is not None and armature.pose and name in armature.pose.bones:
-        return matrix_from_pose_bone(name, convert_to_minecraft=False)
+        return matrix_from_pose_bone(name, convert_to_minecraft=source is None)
 
     raise RuntimeError(f"Could not find export source object '{source}' or pose bone '{name}'.")
 
@@ -81,7 +84,7 @@ def matrix_from_pose_bone(name: str, convert_to_minecraft: bool = True):
     return matrix
 
 
-def matrix_for_animation_sample(name: str, source: str):
+def matrix_for_animation_sample(name: str, source: str | None):
     animation_source = ANIMATION_SOURCES.get(name)
     if animation_source is not None:
         obj = bpy.data.objects.get(animation_source)

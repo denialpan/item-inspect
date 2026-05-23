@@ -26,6 +26,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private Transform itemRoot = Transform.identity();
     private Transform blockRoot = Transform.identity();
     private Transform viewmodelArmR = Transform.identity();
+    private Transform viewmodelArmL = Transform.identity();
     private Animation animation = Animation.empty();
     private int animationTick;
     private boolean playing;
@@ -67,7 +68,15 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public Transform leftViewmodelArmR(float partialTick) {
-        return this.currentTransform(Bone.LEFT_VIEWMODEL_ARM_R, this.viewmodelArmR.mirroredTransform(), partialTick);
+        return this.viewmodelArmL(partialTick);
+    }
+
+    public Transform viewmodelArmL() {
+        return this.viewmodelArmL(0.0F);
+    }
+
+    public Transform viewmodelArmL(float partialTick) {
+        return this.currentTransform(Bone.VIEWMODEL_ARM_L, this.viewmodelArmL, partialTick);
     }
 
     public boolean isLoaded() {
@@ -133,7 +142,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.itemRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "item_root"));
             this.blockRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "block_root"));
             this.viewmodelArmR = Transform.read(GsonHelper.getAsJsonObject(bones, "viewmodel_arm_R"));
-            this.animation = Animation.read(root, this.itemRoot, this.blockRoot, this.viewmodelArmR);
+            this.viewmodelArmL = readOptionalBone(bones, "viewmodel_arm_L", this.viewmodelArmR.mirroredTransform());
+            this.animation = Animation.read(root, this.itemRoot, this.blockRoot, this.viewmodelArmR, this.viewmodelArmL);
             this.playing = false;
             this.animationTick = 0;
             this.loaded = true;
@@ -148,10 +158,19 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.itemRoot = Transform.identity();
             this.blockRoot = Transform.identity();
             this.viewmodelArmR = Transform.identity();
+            this.viewmodelArmL = Transform.identity();
             this.animation = Animation.empty();
             this.playing = false;
             this.animationTick = 0;
             this.loaded = false;
+    }
+
+    private static Transform readOptionalBone(JsonObject bones, String name, Transform fallback) {
+        if (!bones.has(name)) {
+            return fallback;
+        }
+
+        return Transform.read(GsonHelper.getAsJsonObject(bones, name));
     }
 
     public record Transform(float tx, float ty, float tz, float qx, float qy, float qz, float qw, float sx, float sy, float sz) {
@@ -289,9 +308,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         ITEM_ROOT("item_root"),
         BLOCK_ROOT("block_root"),
         VIEWMODEL_ARM_R("viewmodel_arm_R"),
+        VIEWMODEL_ARM_L("viewmodel_arm_L"),
         LEFT_ITEM_ROOT("left_item_root"),
-        LEFT_BLOCK_ROOT("left_block_root"),
-        LEFT_VIEWMODEL_ARM_R("left_viewmodel_arm_R");
+        LEFT_BLOCK_ROOT("left_block_root");
 
         private final String jsonName;
 
@@ -309,7 +328,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             return new Animation(false, List.of());
         }
 
-        public static Animation read(JsonObject root, Transform itemBind, Transform blockBind, Transform armBind) {
+        public static Animation read(JsonObject root, Transform itemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
             if (!root.has("animations")) {
                 return empty();
             }
@@ -324,7 +343,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             JsonArray frameArray = GsonHelper.getAsJsonArray(animationJson, "frames");
             List<AnimationFrame> frames = new ArrayList<>(frameArray.size());
             for (JsonElement element : frameArray) {
-                frames.add(AnimationFrame.read(element.getAsJsonObject(), itemBind, blockBind, armBind));
+                frames.add(AnimationFrame.read(element.getAsJsonObject(), itemBind, blockBind, rightArmBind, leftArmBind));
             }
             frames.sort(Comparator.comparingInt(AnimationFrame::frame));
             return frames.isEmpty() ? empty() : new Animation(loop, List.copyOf(frames));
@@ -363,26 +382,26 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             Transform itemRoot,
             Transform blockRoot,
             Transform viewmodelArmR,
+            Transform viewmodelArmL,
             Transform leftItemRoot,
-            Transform leftBlockRoot,
-            Transform leftViewmodelArmR
+            Transform leftBlockRoot
     ) {
-        public static AnimationFrame read(JsonObject json, Transform itemBind, Transform blockBind, Transform armBind) {
+        public static AnimationFrame read(JsonObject json, Transform itemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
             JsonObject bones = GsonHelper.getAsJsonObject(json, "bones");
             Transform itemRoot = readBone(bones, Bone.ITEM_ROOT);
             Transform blockRoot = readBone(bones, Bone.BLOCK_ROOT);
             Transform viewmodelArmR = readBone(bones, Bone.VIEWMODEL_ARM_R);
+            Transform viewmodelArmL = readBone(bones, Bone.VIEWMODEL_ARM_L);
             Transform effectiveItemRoot = itemRoot == null ? itemBind : itemRoot;
             Transform effectiveBlockRoot = blockRoot == null ? blockBind : blockRoot;
-            Transform effectiveViewmodelArmR = viewmodelArmR == null ? armBind : viewmodelArmR;
             return new AnimationFrame(
                     GsonHelper.getAsInt(json, "frame", 0),
                     itemRoot,
                     blockRoot,
                     viewmodelArmR,
+                    viewmodelArmL == null && leftArmBind == null ? null : viewmodelArmL,
                     effectiveItemRoot.leftHandItemTransform(itemBind),
-                    effectiveBlockRoot.leftHandBlockTransform(blockBind),
-                    effectiveViewmodelArmR.mirroredTransform()
+                    effectiveBlockRoot.leftHandBlockTransform(blockBind)
             );
         }
 
@@ -391,9 +410,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 case ITEM_ROOT -> this.itemRoot;
                 case BLOCK_ROOT -> this.blockRoot;
                 case VIEWMODEL_ARM_R -> this.viewmodelArmR;
+                case VIEWMODEL_ARM_L -> this.viewmodelArmL;
                 case LEFT_ITEM_ROOT -> this.leftItemRoot;
                 case LEFT_BLOCK_ROOT -> this.leftBlockRoot;
-                case LEFT_VIEWMODEL_ARM_R -> this.leftViewmodelArmR;
             };
             return transform == null ? fallback : transform;
         }
