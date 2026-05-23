@@ -1,0 +1,15 @@
+{
+  "itemGroup.iteminspect": "Example Mod Tab",
+  "block.iteminspect.example_block": "Example Block",
+  "item.iteminspect.example_item": "Example Item",
+  "key.categories.iteminspect": "Item Inspect",
+  "key.iteminspect.play_viewmodel_animation": "Play Viewmodel Animation",
+
+  "iteminspect.configuration.title": "item inspect Configs",
+  "iteminspect.configuration.section.iteminspect.common.toml": "item inspect Configs",
+  "iteminspect.configuration.section.iteminspect.common.toml.title": "item inspect Configs",
+  "iteminspect.configuration.items": "Item List",
+  "iteminspect.configuration.logDirtBlock": "Log Dirt Block",
+  "iteminspect.configuration.magicNumberIntroduction": "Magic Number Text",
+  "iteminspect.configuration.magicNumber": "Magic Number"
+}
