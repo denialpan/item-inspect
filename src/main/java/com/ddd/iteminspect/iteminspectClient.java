@@ -26,7 +26,7 @@ import org.lwjgl.glfw.GLFW;
 public class iteminspectClient {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final int EXTERNAL_HANDOFF_TICKS = 8;
-    private static int lastSelectedHotbarSlot = -1;
+    private static boolean hasLastMainHandStack;
     private static ItemStack lastSelectedStack = ItemStack.EMPTY;
     private static boolean lastBothHandsEmpty;
     private static ItemStack queuedExternalHandoffStack = ItemStack.EMPTY;
@@ -69,20 +69,16 @@ public class iteminspectClient {
         Minecraft minecraft = Minecraft.getInstance();
         ItemStack selectedStackForTick = ItemStack.EMPTY;
         if (minecraft.player != null) {
-            int selectedHotbarSlot = minecraft.player.getInventory().selected;
             ItemStack selectedStack = minecraft.player.getMainHandItem();
             boolean bothHandsEmpty = selectedStack.isEmpty() && minecraft.player.getOffhandItem().isEmpty();
             selectedStackForTick = selectedStack;
-            if (lastSelectedHotbarSlot != -1 && selectedHotbarSlot != lastSelectedHotbarSlot) {
-                handleHotbarChanged(lastSelectedStack, selectedStack, lastBothHandsEmpty, bothHandsEmpty);
-            } else if (lastSelectedHotbarSlot != -1 && !ItemStack.matches(lastSelectedStack, selectedStack)) {
-                ViewmodelPose.INSTANCE.cancelAllAnimations();
-                clearExternalHandoff();
+            if (hasLastMainHandStack && !sameMainHandItem(lastSelectedStack, selectedStack)) {
+                handleMainHandChanged(lastSelectedStack, selectedStack, lastBothHandsEmpty, bothHandsEmpty);
             } else if (lastBothHandsEmpty && !bothHandsEmpty) {
                 ViewmodelPose.INSTANCE.cancelAllAnimations();
                 clearExternalHandoff();
             }
-            lastSelectedHotbarSlot = selectedHotbarSlot;
+            hasLastMainHandStack = true;
             lastSelectedStack = selectedStack.copy();
             lastBothHandsEmpty = bothHandsEmpty;
             tickExternalHandoff(selectedStack, bothHandsEmpty);
@@ -90,7 +86,7 @@ public class iteminspectClient {
                 ViewmodelPose.INSTANCE.cancelAnimation();
             }
         } else {
-            lastSelectedHotbarSlot = -1;
+            hasLastMainHandStack = false;
             lastSelectedStack = ItemStack.EMPTY;
             lastBothHandsEmpty = false;
             selectedStackForTick = ItemStack.EMPTY;
@@ -108,7 +104,7 @@ public class iteminspectClient {
         ViewmodelPose.INSTANCE.tickAnimation(selectedStackForTick);
     }
 
-    private static void handleHotbarChanged(ItemStack oldStack, ItemStack newStack, boolean oldBothHandsEmpty, boolean newBothHandsEmpty) {
+    private static void handleMainHandChanged(ItemStack oldStack, ItemStack newStack, boolean oldBothHandsEmpty, boolean newBothHandsEmpty) {
         boolean oldExternal = isExternalItem(oldStack);
         boolean newExternal = isExternalItem(newStack);
         if (newExternal) {
@@ -125,6 +121,14 @@ public class iteminspectClient {
 
         clearExternalHandoff();
         ViewmodelPose.INSTANCE.onHotbarChanged(oldStack, newStack, oldBothHandsEmpty, newBothHandsEmpty);
+    }
+
+    private static boolean sameMainHandItem(ItemStack oldStack, ItemStack newStack) {
+        if (oldStack.isEmpty() || newStack.isEmpty()) {
+            return oldStack.isEmpty() == newStack.isEmpty();
+        }
+
+        return ItemStack.isSameItemSameComponents(oldStack, newStack);
     }
 
     private static void queueExternalHandoff(ItemStack stack, boolean allowEmptyHands) {
