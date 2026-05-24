@@ -22,7 +22,7 @@ public final class ViewmodelRenderer {
     public static void onComputeCameraAngles(ViewportEvent.ComputeCameraAngles event) {
         Minecraft minecraft = Minecraft.getInstance();
         ViewmodelPose pose = ViewmodelPose.INSTANCE;
-        if (minecraft.player == null || minecraft.level == null || !pose.isLoaded() || !pose.isPlaying()) {
+        if (minecraft.player == null || minecraft.level == null || !minecraft.options.bobView().get() || !pose.isLoaded() || !pose.isPlaying()) {
             return;
         }
 
