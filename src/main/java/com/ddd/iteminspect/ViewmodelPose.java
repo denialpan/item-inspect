@@ -228,6 +228,19 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.restartBlendFrom.clear();
     }
 
+    public void cancelAllAnimations() {
+        this.animationTick = 0;
+        this.cancelBlendTick = 0;
+        this.equipBlendWindowTick = 0;
+        this.playing = false;
+        this.state = State.IDLE;
+        this.currentClip = Clip.INSPECT;
+        this.visualStack = ItemStack.EMPTY;
+        this.queuedPulloutStack = ItemStack.EMPTY;
+        this.restartBlendFrom.clear();
+        this.cancelBlendFrom.clear();
+    }
+
     public void tickAnimation() {
         if (!this.cancelBlendFrom.isEmpty()) {
             this.cancelBlendTick++;

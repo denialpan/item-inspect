@@ -65,12 +65,15 @@ public class iteminspectClient {
             ItemStack selectedStack = minecraft.player.getMainHandItem();
             if (lastSelectedHotbarSlot != -1 && selectedHotbarSlot != lastSelectedHotbarSlot) {
                 ViewmodelPose.INSTANCE.onHotbarChanged(lastSelectedStack, selectedStack);
+            } else if (lastSelectedHotbarSlot != -1 && !ItemStack.matches(lastSelectedStack, selectedStack)) {
+                ViewmodelPose.INSTANCE.cancelAllAnimations();
             }
             lastSelectedHotbarSlot = selectedHotbarSlot;
             lastSelectedStack = selectedStack.copy();
         } else {
             lastSelectedHotbarSlot = -1;
             lastSelectedStack = ItemStack.EMPTY;
+            ViewmodelPose.INSTANCE.cancelAllAnimations();
         }
 
         while (PLAY_VIEWMODEL_ANIMATION.consumeClick()) {
