@@ -79,6 +79,9 @@ public class iteminspectClient {
             lastSelectedHotbarSlot = selectedHotbarSlot;
             lastSelectedStack = selectedStack.copy();
             tickExternalHandoff(selectedStack);
+            if (minecraft.options.keyAttack.isDown()) {
+                ViewmodelPose.INSTANCE.cancelAnimation();
+            }
         } else {
             lastSelectedHotbarSlot = -1;
             lastSelectedStack = ItemStack.EMPTY;
