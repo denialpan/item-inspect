@@ -55,6 +55,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private int animationTick;
     private int cancelBlendTick;
     private int equipBlendWindowTick;
+    private boolean skipNextAnimationTick;
     private boolean playing;
     private boolean loaded;
 
@@ -210,6 +211,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.cancelBlendTick = 0;
             this.equipBlendWindowTick = 0;
             this.animationTick = 0;
+            this.skipNextAnimationTick = true;
             this.currentClip = clip;
             this.animation = nextAnimation;
             this.state = targetState;
@@ -238,6 +240,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.cancelBlendTick = 0;
         }
         this.animationTick = 0;
+        this.skipNextAnimationTick = false;
         this.playing = false;
         this.state = this.visualStack.isEmpty() ? State.IDLE : State.READY;
         this.restartBlendFrom.clear();
@@ -245,6 +248,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     public void cancelAllAnimations() {
         this.animationTick = 0;
+        this.skipNextAnimationTick = false;
         this.cancelBlendTick = 0;
         this.equipBlendWindowTick = 0;
         this.playing = false;
@@ -272,6 +276,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             return;
         }
 
+        if (this.skipNextAnimationTick) {
+            this.skipNextAnimationTick = false;
+            return;
+        }
+
         this.animationTick++;
         if (this.animationTick >= this.animation.length()) {
             this.finishCurrentClip(selectedStack);
@@ -290,6 +299,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             }
             this.playing = false;
             this.animationTick = 0;
+            this.skipNextAnimationTick = false;
             this.restartBlendFrom.clear();
             this.state = this.visualStack.isEmpty() ? State.IDLE : State.READY;
             return;
@@ -298,6 +308,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         if (this.currentClip == Clip.PUTAWAY) {
             this.playing = false;
             this.animationTick = 0;
+            this.skipNextAnimationTick = false;
             this.restartBlendFrom.clear();
             this.visualStack = ItemStack.EMPTY;
             this.state = State.IDLE;
@@ -426,6 +437,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.queuedPulloutStack = ItemStack.EMPTY;
             this.playing = false;
             this.animationTick = 0;
+            this.skipNextAnimationTick = false;
             this.restartBlendFrom.clear();
             this.cancelBlendFrom.clear();
             this.cancelBlendTick = 0;
