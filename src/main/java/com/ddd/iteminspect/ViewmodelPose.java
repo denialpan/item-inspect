@@ -24,6 +24,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     public static final ViewmodelPose INSTANCE = new ViewmodelPose();
     private static final ResourceLocation POSE_LOCATION = ResourceLocation.fromNamespaceAndPath(iteminspect.MODID, "viewmodel/default_pose.json");
     private static final int RESTART_BLEND_TICKS = 4;
+    private static final int CANCEL_BLEND_TICKS = 4;
 
     private Transform viewmodelCamera = Transform.identity();
     private Transform itemRoot = Transform.identity();
@@ -32,7 +33,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private Transform viewmodelArmL = Transform.identity();
     private Animation animation = Animation.empty();
     private EnumMap<Bone, Transform> restartBlendFrom = new EnumMap<>(Bone.class);
+    private EnumMap<Bone, Transform> cancelBlendFrom = new EnumMap<>(Bone.class);
     private int animationTick;
+    private int cancelBlendTick;
     private boolean playing;
     private boolean loaded;
 
@@ -95,39 +98,66 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return this.playing;
     }
 
+    public boolean isCameraActive() {
+        return this.playing || !this.cancelBlendFrom.isEmpty();
+    }
+
     public void restartAnimation() {
         if (!this.animation.isEmpty()) {
             this.restartBlendFrom.clear();
-            if (this.playing) {
+            if (this.isCameraActive()) {
                 for (Bone bone : Bone.values()) {
-                    this.restartBlendFrom.put(bone, this.currentTransformWithoutRestartBlend(bone, this.bindFallback(bone), 0.0F));
+                    this.restartBlendFrom.put(bone, this.currentTransform(bone, this.bindFallback(bone), 0.0F));
                 }
             }
+            this.cancelBlendFrom.clear();
+            this.cancelBlendTick = 0;
             this.animationTick = 0;
             this.playing = true;
         }
     }
 
     public void cancelAnimation() {
+        if (!this.playing && !this.cancelBlendFrom.isEmpty()) {
+            return;
+        }
+
+        if (this.isCameraActive()) {
+            this.cancelBlendFrom.clear();
+            this.cancelBlendFrom.put(Bone.VIEWMODEL_CAMERA, this.currentTransform(Bone.VIEWMODEL_CAMERA, this.viewmodelCamera, 0.0F));
+            this.cancelBlendTick = 0;
+        }
         this.animationTick = 0;
         this.playing = false;
         this.restartBlendFrom.clear();
     }
 
     public void tickAnimation() {
+        if (!this.cancelBlendFrom.isEmpty()) {
+            this.cancelBlendTick++;
+            if (this.cancelBlendTick >= CANCEL_BLEND_TICKS) {
+                this.cancelBlendFrom.clear();
+                this.cancelBlendTick = 0;
+            }
+        }
+
         if (!this.playing || this.animation.isEmpty()) {
             return;
         }
 
         this.animationTick++;
         if (this.animationTick >= this.animation.length()) {
-            this.animationTick = this.animation.length() - 1;
-            this.playing = false;
-            this.restartBlendFrom.clear();
+            this.cancelAnimation();
         }
     }
 
     private Transform currentTransform(Bone bone, Transform fallback, float partialTick) {
+        if (bone == Bone.VIEWMODEL_CAMERA && !this.cancelBlendFrom.isEmpty() && !this.playing) {
+            float alpha = Math.min((this.cancelBlendTick + partialTick) / CANCEL_BLEND_TICKS, 1.0F);
+            Transform from = this.cancelBlendFrom.getOrDefault(bone, fallback);
+            return Transform.lerp(from, fallback, smoothStep(alpha));
+        }
+
         Transform transform = this.currentTransformWithoutRestartBlend(bone, fallback, partialTick);
         if (this.restartBlendFrom.isEmpty()) {
             return transform;
@@ -195,6 +225,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.playing = false;
             this.animationTick = 0;
             this.restartBlendFrom.clear();
+            this.cancelBlendFrom.clear();
+            this.cancelBlendTick = 0;
             this.loaded = true;
             iteminspect.LOGGER.info("Loaded viewmodel pose {} with {} animation frame(s)", source, this.animation.length());
         } catch (RuntimeException exception) {
@@ -213,6 +245,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.playing = false;
             this.animationTick = 0;
             this.restartBlendFrom.clear();
+            this.cancelBlendFrom.clear();
+            this.cancelBlendTick = 0;
             this.loaded = false;
     }
 

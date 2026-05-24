@@ -65,6 +65,7 @@ public class iteminspectClient {
 
         if (minecraft.options.keyAttack.isDown() || minecraft.options.keyUse.isDown()) {
             ViewmodelPose.INSTANCE.cancelAnimation();
+            ViewmodelPose.INSTANCE.tickAnimation();
             return;
         }
 
