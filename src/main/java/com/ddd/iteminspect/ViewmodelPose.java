@@ -134,8 +134,22 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     public void onHotbarChanged(ItemStack oldStack, ItemStack newStack) {
         this.queuedPulloutStack = newStack.copy();
+        if (this.state == State.PUTAWAY) {
+            return;
+        }
+
+        if (this.state == State.PULLOUT) {
+            this.visualStack = ItemStack.EMPTY;
+            this.state = State.IDLE;
+            this.playing = false;
+            this.animationTick = 0;
+            this.restartBlendFrom.clear();
+            this.startPullout(newStack);
+            return;
+        }
+
         ItemStack putawayStack = !this.visualStack.isEmpty() ? this.visualStack.copy() : oldStack.copy();
-        if (!putawayStack.isEmpty() && (this.state == State.PULLOUT || this.state == State.READY || this.state == State.INSPECT)) {
+        if (!putawayStack.isEmpty() && (this.state == State.READY || this.state == State.INSPECT)) {
             if (this.playClip(Clip.PUTAWAY, putawayStack, State.PUTAWAY)) {
                 return;
             }
