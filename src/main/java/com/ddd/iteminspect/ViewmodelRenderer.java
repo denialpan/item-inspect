@@ -51,11 +51,11 @@ public final class ViewmodelRenderer {
 
         PoseStack poseStack = event.getPoseStack();
         ViewmodelPose pose = ViewmodelPose.INSTANCE;
-        ItemStack stack = event.getItemStack();
         if (!pose.isLoaded() || !pose.isPlaying()) {
             return;
         }
 
+        ItemStack stack = pose.visualStackOr(event.getItemStack());
         event.setCanceled(true);
 
         boolean leftMainHand = minecraft.player.getMainArm() == HumanoidArm.LEFT;

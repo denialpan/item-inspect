@@ -1,8 +1,10 @@
 package com.ddd.iteminspect;
 
 import com.mojang.blaze3d.platform.InputConstants;
+import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
@@ -14,12 +16,15 @@ import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
 import net.neoforged.neoforge.client.gui.ConfigurationScreen;
 import net.neoforged.neoforge.client.gui.IConfigScreenFactory;
 import net.neoforged.neoforge.common.NeoForge;
+import org.slf4j.Logger;
 import org.lwjgl.glfw.GLFW;
 
 // This class will not load on dedicated servers. Accessing client side code from here is safe.
-@Mod(value = iteminspect.MODID, dist = Dist.CLIENT)
+@Mod(value = "iteminspect", dist = Dist.CLIENT)
 public class iteminspectClient {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static int lastSelectedHotbarSlot = -1;
+    private static ItemStack lastSelectedStack = ItemStack.EMPTY;
     private static final KeyMapping PLAY_VIEWMODEL_ANIMATION = new KeyMapping(
             "key.iteminspect.play_viewmodel_animation",
             InputConstants.Type.KEYSYM,
@@ -41,8 +46,8 @@ public class iteminspectClient {
 
     static void onClientSetup(FMLClientSetupEvent event) {
         // Some client setup code
-        iteminspect.LOGGER.info("HELLO FROM CLIENT SETUP");
-        iteminspect.LOGGER.info("MINECRAFT NAME >> {}", Minecraft.getInstance().getUser().getName());
+        LOGGER.info("HELLO FROM CLIENT SETUP");
+        LOGGER.info("MINECRAFT NAME >> {}", Minecraft.getInstance().getUser().getName());
     }
 
     static void onRegisterReloadListeners(RegisterClientReloadListenersEvent event) {
@@ -57,10 +62,15 @@ public class iteminspectClient {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player != null) {
             int selectedHotbarSlot = minecraft.player.getInventory().selected;
+            ItemStack selectedStack = minecraft.player.getMainHandItem();
             if (lastSelectedHotbarSlot != -1 && selectedHotbarSlot != lastSelectedHotbarSlot) {
-                ViewmodelPose.INSTANCE.cancelAnimation();
+                ViewmodelPose.INSTANCE.onHotbarChanged(lastSelectedStack, selectedStack);
             }
             lastSelectedHotbarSlot = selectedHotbarSlot;
+            lastSelectedStack = selectedStack.copy();
+        } else {
+            lastSelectedHotbarSlot = -1;
+            lastSelectedStack = ItemStack.EMPTY;
         }
 
         if (minecraft.options.keyAttack.isDown() || minecraft.options.keyUse.isDown()) {
@@ -70,7 +80,7 @@ public class iteminspectClient {
         }
 
         while (PLAY_VIEWMODEL_ANIMATION.consumeClick()) {
-            ViewmodelPose.INSTANCE.restartAnimation();
+            ViewmodelPose.INSTANCE.startInspect(minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getMainHandItem());
         }
         ViewmodelPose.INSTANCE.tickAnimation();
     }
