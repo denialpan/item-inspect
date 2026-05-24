@@ -121,12 +121,16 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return this.playing || !this.cancelBlendFrom.isEmpty();
     }
 
+    public boolean shouldSuppressVanillaMainHandEquip() {
+        return this.state != State.IDLE || this.equipBlendWindowTick > 0;
+    }
+
     public ItemStack visualStackOr(ItemStack fallback) {
         return this.visualStack.isEmpty() ? fallback : this.visualStack;
     }
 
     public void startInspect(ItemStack stack) {
-        if (this.state == State.PULLOUT || this.state == State.PUTAWAY) {
+        if (this.state == State.PULLOUT || this.state == State.PUTAWAY || this.equipBlendWindowTick > 0) {
             return;
         }
         this.playClip(Clip.INSPECT, stack, State.INSPECT);
@@ -134,9 +138,26 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     public void onHotbarChanged(ItemStack oldStack, ItemStack newStack) {
         this.queuedPulloutStack = newStack.copy();
+        if (this.state == State.PUTAWAY) {
+            return;
+        }
+
+        if (this.state == State.PULLOUT) {
+            ItemStack putawayStack = !this.visualStack.isEmpty() ? this.visualStack.copy() : oldStack.copy();
+            if (!this.startPutaway(putawayStack)) {
+                this.visualStack = ItemStack.EMPTY;
+                this.state = State.IDLE;
+                this.playing = false;
+                this.animationTick = 0;
+                this.restartBlendFrom.clear();
+                this.startPullout(newStack);
+            }
+            return;
+        }
+
         ItemStack putawayStack = !this.visualStack.isEmpty() ? this.visualStack.copy() : oldStack.copy();
-        if (!putawayStack.isEmpty() && (this.state == State.PULLOUT || this.state == State.READY || this.state == State.INSPECT)) {
-            if (this.playClip(Clip.PUTAWAY, putawayStack, State.PUTAWAY)) {
+        if (!putawayStack.isEmpty() && (this.state == State.READY || this.state == State.INSPECT)) {
+            if (this.startPutaway(putawayStack)) {
                 return;
             }
             this.visualStack = ItemStack.EMPTY;
@@ -146,6 +167,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
 
         this.startPullout(newStack);
+    }
+
+    private boolean startPutaway(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+
+        return this.playClip(Clip.PUTAWAY, stack, State.PUTAWAY);
     }
 
     public void startPullout(ItemStack stack) {
@@ -214,7 +243,20 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.restartBlendFrom.clear();
     }
 
-    public void tickAnimation() {
+    public void cancelAllAnimations() {
+        this.animationTick = 0;
+        this.cancelBlendTick = 0;
+        this.equipBlendWindowTick = 0;
+        this.playing = false;
+        this.state = State.IDLE;
+        this.currentClip = Clip.INSPECT;
+        this.visualStack = ItemStack.EMPTY;
+        this.queuedPulloutStack = ItemStack.EMPTY;
+        this.restartBlendFrom.clear();
+        this.cancelBlendFrom.clear();
+    }
+
+    public void tickAnimation(ItemStack selectedStack) {
         if (!this.cancelBlendFrom.isEmpty()) {
             this.cancelBlendTick++;
             if (this.cancelBlendTick >= CANCEL_BLEND_TICKS) {
@@ -232,12 +274,20 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
         this.animationTick++;
         if (this.animationTick >= this.animation.length()) {
-            this.finishCurrentClip();
+            this.finishCurrentClip(selectedStack);
         }
     }
 
-    private void finishCurrentClip() {
+    public void tickAnimation() {
+        this.tickAnimation(ItemStack.EMPTY);
+    }
+
+    private void finishCurrentClip(ItemStack selectedStack) {
         if (this.currentClip == Clip.PULLOUT) {
+            if (!selectedStack.isEmpty() && !ItemStack.matches(this.visualStack, selectedStack)) {
+                this.cancelAllAnimations();
+                return;
+            }
             this.playing = false;
             this.animationTick = 0;
             this.restartBlendFrom.clear();
@@ -253,7 +303,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.state = State.IDLE;
             ItemStack nextStack = this.queuedPulloutStack.copy();
             this.queuedPulloutStack = ItemStack.EMPTY;
-            if (!nextStack.isEmpty()) {
+            if (!nextStack.isEmpty() && (selectedStack.isEmpty() || ItemStack.matches(nextStack, selectedStack))) {
                 this.startPullout(nextStack);
             }
             return;

@@ -4,6 +4,8 @@ import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.KeyMapping;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
@@ -23,8 +25,11 @@ import org.lwjgl.glfw.GLFW;
 @Mod(value = "iteminspect", dist = Dist.CLIENT)
 public class iteminspectClient {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final int EXTERNAL_HANDOFF_TICKS = 8;
     private static int lastSelectedHotbarSlot = -1;
     private static ItemStack lastSelectedStack = ItemStack.EMPTY;
+    private static ItemStack queuedExternalHandoffStack = ItemStack.EMPTY;
+    private static int externalHandoffTicks;
     private static final KeyMapping PLAY_VIEWMODEL_ANIMATION = new KeyMapping(
             "key.iteminspect.play_viewmodel_animation",
             InputConstants.Type.KEYSYM,
@@ -60,22 +65,94 @@ public class iteminspectClient {
 
     static void onClientTick(ClientTickEvent.Post event) {
         Minecraft minecraft = Minecraft.getInstance();
+        ItemStack selectedStackForTick = ItemStack.EMPTY;
         if (minecraft.player != null) {
             int selectedHotbarSlot = minecraft.player.getInventory().selected;
             ItemStack selectedStack = minecraft.player.getMainHandItem();
+            selectedStackForTick = selectedStack;
             if (lastSelectedHotbarSlot != -1 && selectedHotbarSlot != lastSelectedHotbarSlot) {
-                ViewmodelPose.INSTANCE.onHotbarChanged(lastSelectedStack, selectedStack);
+                handleHotbarChanged(lastSelectedStack, selectedStack);
+            } else if (lastSelectedHotbarSlot != -1 && !ItemStack.matches(lastSelectedStack, selectedStack)) {
+                ViewmodelPose.INSTANCE.cancelAllAnimations();
+                clearExternalHandoff();
             }
             lastSelectedHotbarSlot = selectedHotbarSlot;
             lastSelectedStack = selectedStack.copy();
+            tickExternalHandoff(selectedStack);
         } else {
             lastSelectedHotbarSlot = -1;
             lastSelectedStack = ItemStack.EMPTY;
+            selectedStackForTick = ItemStack.EMPTY;
+            clearExternalHandoff();
+            ViewmodelPose.INSTANCE.cancelAllAnimations();
         }
 
         while (PLAY_VIEWMODEL_ANIMATION.consumeClick()) {
-            ViewmodelPose.INSTANCE.startInspect(minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getMainHandItem());
+            ItemStack selectedStack = minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getMainHandItem();
+            if (!isExternalItem(selectedStack) && externalHandoffTicks <= 0) {
+                ViewmodelPose.INSTANCE.startInspect(selectedStack);
+            }
         }
-        ViewmodelPose.INSTANCE.tickAnimation();
+        ViewmodelPose.INSTANCE.tickAnimation(selectedStackForTick);
+    }
+
+    private static void handleHotbarChanged(ItemStack oldStack, ItemStack newStack) {
+        boolean oldExternal = isExternalItem(oldStack);
+        boolean newExternal = isExternalItem(newStack);
+        if (newExternal) {
+            ViewmodelPose.INSTANCE.cancelAllAnimations();
+            clearExternalHandoff();
+            return;
+        }
+
+        if (oldExternal) {
+            ViewmodelPose.INSTANCE.cancelAllAnimations();
+            queueExternalHandoff(newStack);
+            return;
+        }
+
+        clearExternalHandoff();
+        ViewmodelPose.INSTANCE.onHotbarChanged(oldStack, newStack);
+    }
+
+    private static void queueExternalHandoff(ItemStack stack) {
+        if (stack.isEmpty()) {
+            clearExternalHandoff();
+            return;
+        }
+
+        queuedExternalHandoffStack = stack.copy();
+        externalHandoffTicks = EXTERNAL_HANDOFF_TICKS;
+    }
+
+    private static void tickExternalHandoff(ItemStack selectedStack) {
+        if (externalHandoffTicks <= 0) {
+            return;
+        }
+
+        if (selectedStack.isEmpty() || isExternalItem(selectedStack) || !ItemStack.matches(queuedExternalHandoffStack, selectedStack)) {
+            clearExternalHandoff();
+            return;
+        }
+
+        externalHandoffTicks--;
+        if (externalHandoffTicks == 0) {
+            ViewmodelPose.INSTANCE.startPullout(selectedStack);
+            queuedExternalHandoffStack = ItemStack.EMPTY;
+        }
+    }
+
+    private static void clearExternalHandoff() {
+        queuedExternalHandoffStack = ItemStack.EMPTY;
+        externalHandoffTicks = 0;
+    }
+
+    private static boolean isExternalItem(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return false;
+        }
+
+        ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+        return "tacz".equals(itemId.getNamespace());
     }
 }
