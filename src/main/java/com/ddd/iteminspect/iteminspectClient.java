@@ -73,12 +73,6 @@ public class iteminspectClient {
             lastSelectedStack = ItemStack.EMPTY;
         }
 
-        if (minecraft.options.keyAttack.isDown() || minecraft.options.keyUse.isDown()) {
-            ViewmodelPose.INSTANCE.cancelAnimation();
-            ViewmodelPose.INSTANCE.tickAnimation();
-            return;
-        }
-
         while (PLAY_VIEWMODEL_ANIMATION.consumeClick()) {
             ViewmodelPose.INSTANCE.startInspect(minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getMainHandItem());
         }

@@ -3,6 +3,9 @@
   "package": "com.ddd.iteminspect.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [],
+  "client": [
+    "MultiPlayerGameModeMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   },
