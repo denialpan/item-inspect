@@ -3,7 +3,7 @@ Export the current Blender viewmodel pose and baked animation samples into the
 Minecraft resource loaded by the iteminspect client renderer.
 
 Run from Blender with the generated .blend open:
-    blender minecraft_1_21_1_empty_hand_viewmodel.blend --background --python tools/export_viewmodel_pose.py
+    blender minecraft_1_21_1_empty_hand_viewmodel.blend --background --python tools/export_viewmodel_animation.py -- --action iteminspect.inspect --animation inspect
 
 Output:
     src/main/resources/assets/iteminspect/viewmodel/default_pose.json
@@ -12,7 +12,9 @@ The exporter writes decomposed TRS data. The Minecraft renderer applies each
 transform as translate -> quaternion rotation -> scale.
 
 Animation export:
-    - uses the selected armature object's active action as the exported rig
+    - uses the selected armature object as the exported rig
+    - exports the named Blender Action passed by --action, or the armature's
+      active action when --action is omitted
     - samples every integer frame from Blender frame 1 through that last frame
     - samples evaluated dependency-graph matrices so pose constraints are included
     - keeps the static "bones" pose from the hidden Minecraft-space export anchors
@@ -32,6 +34,7 @@ from mathutils import Matrix
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "src/main/resources/assets/iteminspect/viewmodel/default_pose.json"
 DEFAULT_ANIMATION_NAME = "default"
+DEFAULT_ACTION_NAME = None
 AUTHORING_TO_MINECRAFT_MATRIX = Matrix.Rotation(math.radians(-90.0), 4, "X")
 
 EXPORT_SOURCES = {
@@ -160,6 +163,20 @@ def animation_name_from_args() -> str:
     return DEFAULT_ANIMATION_NAME
 
 
+def action_name_from_args() -> str | None:
+    if "--" not in sys.argv:
+        return DEFAULT_ACTION_NAME
+
+    args = sys.argv[sys.argv.index("--") + 1 :]
+    if "--action" in args:
+        index = args.index("--action")
+        if index + 1 >= len(args):
+            raise RuntimeError("--action requires a Blender Action name.")
+        return args[index + 1]
+
+    return DEFAULT_ACTION_NAME
+
+
 def keyed_id_matches_export_bone(data_path: str) -> bool:
     if not data_path:
         return False
@@ -195,6 +212,14 @@ def object_last_keyframe(obj, filter_pose_bones: bool = False) -> float | None:
     return last
 
 
+def selected_viewmodel_armature() -> bpy.types.Object:
+    armature = find_viewmodel_armature()
+    if armature is None:
+        raise RuntimeError("Select the viewmodel armature in Object Mode before exporting.")
+
+    return armature
+
+
 def find_viewmodel_armature() -> bpy.types.Object | None:
     selected_armatures = [obj for obj in bpy.context.selected_objects if obj.type == "ARMATURE"]
     if len(selected_armatures) > 1:
@@ -206,13 +231,31 @@ def find_viewmodel_armature() -> bpy.types.Object | None:
     return selected_armatures[0]
 
 
-def detect_last_keyframe() -> int | None:
-    armature = find_viewmodel_armature()
-    if armature is None:
-        raise RuntimeError("Select the viewmodel armature in Object Mode before exporting.")
+def set_armature_action(armature: bpy.types.Object, action_name: str | None):
+    if armature.animation_data is None:
+        armature.animation_data_create()
 
+    if action_name is None:
+        if armature.animation_data.action is None:
+            raise RuntimeError(
+                f"Selected armature '{armature.name}' has no active action. "
+                "Assign an action in Blender or pass --action <Action Name>."
+            )
+        return armature.animation_data.action
+
+    action = bpy.data.actions.get(action_name)
+    if action is None:
+        available = ", ".join(sorted(action.name for action in bpy.data.actions))
+        raise RuntimeError(f"Could not find Blender Action '{action_name}'. Available actions: {available}")
+
+    armature.animation_data.action = action
+    bpy.context.view_layer.update()
+    return action
+
+
+def detect_last_keyframe(armature: bpy.types.Object) -> int | None:
     # Constraint influence keys live under pose.bones["viewmodel_arm_R"] and ["viewmodel_arm_L"].
-    # Only the active action on this armature defines the exported timeline;
+    # Only the selected/exported action on this armature defines the exported timeline;
     # stale/unassigned actions and helper-object keys are intentionally ignored.
     last = object_last_keyframe(armature, filter_pose_bones=True)
     if last is None:
@@ -262,36 +305,47 @@ def output_path_from_args() -> Path:
 
 def main() -> None:
     output = output_path_from_args()
+    armature = selected_viewmodel_armature()
+    original_action = armature.animation_data.action if armature.animation_data is not None else None
+    action_name = action_name_from_args()
+    action = set_armature_action(armature, action_name)
     start_frame, requested_end_frame = frame_range_from_args()
-    detected_end_frame = detect_last_keyframe()
+    detected_end_frame = detect_last_keyframe(armature)
     end_frame = requested_end_frame if requested_end_frame is not None else detected_end_frame
 
-    bones = {
-        name: trs_from_matrix(matrix_from_named_source(name, source))
-        for name, source in EXPORT_SOURCES.items()
-    }
-    data = {
-        "format": 2,
-        "coordinate_space": "minecraft_first_person_render",
-        "bones": bones,
-    }
-
-    if end_frame is not None and end_frame >= start_frame:
-        animation_name = animation_name_from_args()
-        data["animations"] = {
-            animation_name: {
-                "fps": bpy.context.scene.render.fps,
-                "start_frame": start_frame,
-                "end_frame": end_frame,
-                "length_frames": end_frame - start_frame + 1,
-                "loop": True,
-                "frames": export_animation(start_frame, end_frame),
-            }
+    try:
+        bones = {
+            name: trs_from_matrix(matrix_from_named_source(name, source))
+            for name, source in EXPORT_SOURCES.items()
         }
+        data = {
+            "format": 2,
+            "coordinate_space": "minecraft_first_person_render",
+            "bones": bones,
+        }
+
+        if end_frame is not None and end_frame >= start_frame:
+            animation_name = animation_name_from_args()
+            data["animations"] = {
+                animation_name: {
+                    "fps": bpy.context.scene.render.fps,
+                    "start_frame": start_frame,
+                    "end_frame": end_frame,
+                    "length_frames": end_frame - start_frame + 1,
+                    "loop": True,
+                    "frames": export_animation(start_frame, end_frame),
+                }
+            }
+    finally:
+        if armature.animation_data is not None:
+            armature.animation_data.action = original_action
+            bpy.context.view_layer.update()
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     print(f"Exported viewmodel pose to {output}")
+    print(f"Selected armature: {armature.name}")
+    print(f"Exported Blender action: {action.name}")
     if end_frame is None:
         print("No keyed animation data detected; exported static pose only.")
     else:

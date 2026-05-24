@@ -8,15 +8,21 @@ import com.mojang.logging.LogUtils;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.io.IOException;
 import java.io.Reader;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
+import net.minecraft.tags.TagKey;
 import net.minecraft.util.GsonHelper;
+import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
@@ -27,6 +33,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     public static final ViewmodelPose INSTANCE = new ViewmodelPose();
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final String MODID = "iteminspect";
+    private static final ResourceLocation PROFILE_INDEX_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/profiles.json");
     private static final ResourceLocation INSPECT_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default/default_inspect.json");
     private static final ResourceLocation PULLOUT_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default/default_pullout.json");
     private static final ResourceLocation PULLOUT_TYPO_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default/defualt_pullout.json");
@@ -45,7 +52,12 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private Transform viewmodelArmR = Transform.identity();
     private Transform viewmodelArmL = Transform.identity();
     private final EnumMap<Clip, Animation> animations = new EnumMap<>(Clip.class);
+    private final Map<ResourceLocation, AnimationProfile> profiles = new HashMap<>();
+    private final Map<ResourceLocation, ResourceLocation> itemProfileRules = new HashMap<>();
+    private final List<TagProfileRule> tagProfileRules = new ArrayList<>();
     private Animation animation = Animation.empty();
+    private ResourceLocation fallbackProfileId;
+    private ResourceLocation activeProfileId;
     private State state = State.IDLE;
     private Clip currentClip = Clip.INSPECT;
     private ItemStack visualStack = ItemStack.EMPTY;
@@ -126,12 +138,19 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return this.state != State.IDLE || this.equipBlendWindowTick > 0;
     }
 
+    public boolean hasProfileFor(ItemStack stack) {
+        return this.resolveProfile(stack) != null;
+    }
+
     public ItemStack visualStackOr(ItemStack fallback) {
         return this.visualStack.isEmpty() ? fallback : this.visualStack;
     }
 
     public void startInspect(ItemStack stack) {
         if (this.state == State.PULLOUT || this.state == State.PUTAWAY || this.equipBlendWindowTick > 0) {
+            return;
+        }
+        if (!this.activateProfile(stack)) {
             return;
         }
         this.playClip(Clip.INSPECT, stack, State.INSPECT);
@@ -184,6 +203,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.state = State.IDLE;
             return;
         }
+        if (!this.activateProfile(stack)) {
+            this.visualStack = ItemStack.EMPTY;
+            this.state = State.IDLE;
+            return;
+        }
         if (!this.playClip(Clip.PULLOUT, stack, State.PULLOUT)) {
             this.visualStack = stack.copy();
             this.state = State.READY;
@@ -195,6 +219,10 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     private boolean playClip(Clip clip, ItemStack stack, State targetState) {
+        if (this.activeProfileId == null) {
+            return false;
+        }
+
         Animation nextAnimation = this.animations.getOrDefault(clip, Animation.empty());
         if (!nextAnimation.isEmpty()) {
             this.restartBlendFrom.clear();
@@ -254,6 +282,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.playing = false;
         this.state = State.IDLE;
         this.currentClip = Clip.INSPECT;
+        this.activeProfileId = null;
         this.visualStack = ItemStack.EMPTY;
         this.queuedPulloutStack = ItemStack.EMPTY;
         this.restartBlendFrom.clear();
@@ -289,6 +318,53 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     public void tickAnimation() {
         this.tickAnimation(ItemStack.EMPTY);
+    }
+
+    private boolean activateProfile(ItemStack stack) {
+        ResourceLocation profileId = this.resolveProfile(stack);
+        if (profileId == null) {
+            return false;
+        }
+        if (profileId.equals(this.activeProfileId)) {
+            return true;
+        }
+
+        AnimationProfile profile = this.profiles.get(profileId);
+        if (profile == null) {
+            LOGGER.warn("Missing resolved viewmodel profile {}", profileId);
+            return false;
+        }
+
+        this.activeProfileId = profileId;
+        this.viewmodelCamera = profile.viewmodelCamera();
+        this.itemRoot = profile.itemRoot();
+        this.blockRoot = profile.blockRoot();
+        this.viewmodelArmR = profile.viewmodelArmR();
+        this.viewmodelArmL = profile.viewmodelArmL();
+        this.animations.clear();
+        this.animations.putAll(profile.animations());
+        this.animation = this.animations.getOrDefault(this.currentClip, Animation.empty());
+        return true;
+    }
+
+    private ResourceLocation resolveProfile(ItemStack stack) {
+        if (stack.isEmpty()) {
+            return null;
+        }
+
+        ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+        ResourceLocation itemProfile = this.itemProfileRules.get(itemId);
+        if (itemProfile != null) {
+            return itemProfile;
+        }
+
+        for (TagProfileRule rule : this.tagProfileRules) {
+            if (stack.is(rule.tag())) {
+                return rule.profileId();
+            }
+        }
+
+        return this.fallbackProfileId;
     }
 
     private void finishCurrentClip(ItemStack selectedStack) {
@@ -372,31 +448,99 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     public void onResourceManagerReload(ResourceManager resourceManager) {
         try {
             this.clear();
-            JsonObject inspectRoot = this.readFirstExisting(resourceManager, INSPECT_LOCATION, LEGACY_INSPECT_LOCATION);
-            if (inspectRoot == null) {
-                LOGGER.warn("Missing viewmodel inspect animation {}", INSPECT_LOCATION);
+            JsonObject profileIndex = this.readFirstExisting(resourceManager, PROFILE_INDEX_LOCATION);
+            if (profileIndex == null) {
+                LOGGER.warn("Missing viewmodel profile index {}", PROFILE_INDEX_LOCATION);
                 return;
             }
 
-            this.loadBindPose(inspectRoot);
-            this.animations.put(Clip.INSPECT, Animation.read(inspectRoot, this.viewmodelCamera, this.itemRoot, this.blockRoot, this.viewmodelArmR, this.viewmodelArmL));
-            this.loadOptionalClip(resourceManager, Clip.PULLOUT, PULLOUT_LOCATION, PULLOUT_TYPO_LOCATION, LEGACY_PULLOUT_LOCATION, LEGACY_PULLOUT_TYPO_LOCATION);
-            this.loadOptionalClip(resourceManager, Clip.PUTAWAY, PUTAWAY_LOCATION, LEGACY_PUTAWAY_LOCATION);
-            this.animation = this.animations.getOrDefault(Clip.INSPECT, Animation.empty());
+            this.loadProfileIndex(resourceManager, profileIndex);
             this.loaded = true;
-            LOGGER.info("Loaded viewmodel animations: inspect={} pullout={} putaway={}",
-                    this.animations.getOrDefault(Clip.INSPECT, Animation.empty()).length(),
-                    this.animations.getOrDefault(Clip.PULLOUT, Animation.empty()).length(),
-                    this.animations.getOrDefault(Clip.PUTAWAY, Animation.empty()).length());
+            LOGGER.info("Loaded {} viewmodel profiles, {} item rules, {} tag rules",
+                    this.profiles.size(),
+                    this.itemProfileRules.size(),
+                    this.tagProfileRules.size());
         } catch (RuntimeException exception) {
             LOGGER.error("Failed to load viewmodel animations", exception);
             this.clear();
         }
     }
 
-    private void loadOptionalClip(ResourceManager resourceManager, Clip clip, ResourceLocation... locations) {
-        JsonObject root = this.readFirstExisting(resourceManager, locations);
-        this.animations.put(clip, root == null ? Animation.empty() : Animation.read(root, this.viewmodelCamera, this.itemRoot, this.blockRoot, this.viewmodelArmR, this.viewmodelArmL));
+    private void loadProfileIndex(ResourceManager resourceManager, JsonObject root) {
+        if (root.has("fallback") && !root.get("fallback").isJsonNull()) {
+            this.fallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "fallback"));
+            this.ensureProfileLoaded(resourceManager, this.fallbackProfileId);
+        }
+
+        if (root.has("items")) {
+            JsonObject items = GsonHelper.getAsJsonObject(root, "items");
+            for (Map.Entry<String, JsonElement> entry : items.entrySet()) {
+                ResourceLocation itemId = ResourceLocation.parse(entry.getKey());
+                ResourceLocation profileId = ResourceLocation.parse(entry.getValue().getAsString());
+                this.itemProfileRules.put(itemId, profileId);
+                this.ensureProfileLoaded(resourceManager, profileId);
+            }
+        }
+
+        if (root.has("tags")) {
+            JsonArray tags = GsonHelper.getAsJsonArray(root, "tags");
+            for (JsonElement element : tags) {
+                JsonObject tagRule = element.getAsJsonObject();
+                ResourceLocation tagId = ResourceLocation.parse(GsonHelper.getAsString(tagRule, "id"));
+                ResourceLocation profileId = ResourceLocation.parse(GsonHelper.getAsString(tagRule, "profile"));
+                this.tagProfileRules.add(new TagProfileRule(TagKey.create(Registries.ITEM, tagId), profileId));
+                this.ensureProfileLoaded(resourceManager, profileId);
+            }
+        }
+    }
+
+    private void ensureProfileLoaded(ResourceManager resourceManager, ResourceLocation profileId) {
+        if (this.profiles.containsKey(profileId)) {
+            return;
+        }
+
+        JsonObject profileRoot = this.readRequired(resourceManager, profileId);
+        this.profiles.put(profileId, this.readProfile(resourceManager, profileId, profileRoot));
+    }
+
+    private AnimationProfile readProfile(ResourceManager resourceManager, ResourceLocation profileId, JsonObject root) {
+        JsonObject clips = GsonHelper.getAsJsonObject(root, "clips");
+        ResourceLocation inspectLocation = this.clipLocation(clips, Clip.INSPECT);
+        JsonObject inspectRoot = this.readRequired(resourceManager, inspectLocation);
+        ProfileBindPose bindPose = this.readBindPose(inspectRoot);
+
+        EnumMap<Clip, Animation> profileAnimations = new EnumMap<>(Clip.class);
+        profileAnimations.put(Clip.INSPECT, Animation.read(inspectRoot, bindPose.viewmodelCamera(), bindPose.itemRoot(), bindPose.blockRoot(), bindPose.viewmodelArmR(), bindPose.viewmodelArmL()));
+        this.loadProfileClip(resourceManager, profileAnimations, bindPose, clips, Clip.PULLOUT);
+        this.loadProfileClip(resourceManager, profileAnimations, bindPose, clips, Clip.PUTAWAY);
+
+        LOGGER.info("Loaded viewmodel profile {}: inspect={} pullout={} putaway={}",
+                profileId,
+                profileAnimations.getOrDefault(Clip.INSPECT, Animation.empty()).length(),
+                profileAnimations.getOrDefault(Clip.PULLOUT, Animation.empty()).length(),
+                profileAnimations.getOrDefault(Clip.PUTAWAY, Animation.empty()).length());
+        return new AnimationProfile(
+                bindPose.viewmodelCamera(),
+                bindPose.itemRoot(),
+                bindPose.blockRoot(),
+                bindPose.viewmodelArmR(),
+                bindPose.viewmodelArmL(),
+                profileAnimations
+        );
+    }
+
+    private void loadProfileClip(ResourceManager resourceManager, EnumMap<Clip, Animation> profileAnimations, ProfileBindPose bindPose, JsonObject clips, Clip clip) {
+        ResourceLocation location = this.clipLocation(clips, clip);
+        JsonObject root = this.readFirstExisting(resourceManager, location);
+        profileAnimations.put(clip, root == null ? Animation.empty() : Animation.read(root, bindPose.viewmodelCamera(), bindPose.itemRoot(), bindPose.blockRoot(), bindPose.viewmodelArmR(), bindPose.viewmodelArmL()));
+    }
+
+    private ResourceLocation clipLocation(JsonObject clips, Clip clip) {
+        String key = clip.configKey();
+        if (!clips.has(key)) {
+            throw new IllegalArgumentException("Viewmodel profile is missing clip '" + key + "'");
+        }
+        return ResourceLocation.parse(GsonHelper.getAsString(clips, key));
     }
 
     private JsonObject readFirstExisting(ResourceManager resourceManager, ResourceLocation... locations) {
@@ -414,13 +558,22 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return null;
     }
 
-    private void loadBindPose(JsonObject root) {
+    private JsonObject readRequired(ResourceManager resourceManager, ResourceLocation location) {
+        JsonObject root = this.readFirstExisting(resourceManager, location);
+        if (root == null) {
+            throw new IllegalArgumentException("Missing viewmodel resource " + location);
+        }
+        return root;
+    }
+
+    private ProfileBindPose readBindPose(JsonObject root) {
         JsonObject bones = GsonHelper.getAsJsonObject(root, "bones");
-        this.viewmodelCamera = readOptionalBone(bones, "viewmodel_camera", Transform.identity());
-        this.itemRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "item_root"));
-        this.blockRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "block_root"));
-        this.viewmodelArmR = Transform.read(GsonHelper.getAsJsonObject(bones, "viewmodel_arm_R"));
-        this.viewmodelArmL = readOptionalBone(bones, "viewmodel_arm_L", this.viewmodelArmR.mirroredTransform());
+        Transform viewmodelCamera = readOptionalBone(bones, "viewmodel_camera", Transform.identity());
+        Transform itemRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "item_root"));
+        Transform blockRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "block_root"));
+        Transform viewmodelArmR = Transform.read(GsonHelper.getAsJsonObject(bones, "viewmodel_arm_R"));
+        Transform viewmodelArmL = readOptionalBone(bones, "viewmodel_arm_L", viewmodelArmR.mirroredTransform());
+        return new ProfileBindPose(viewmodelCamera, itemRoot, blockRoot, viewmodelArmR, viewmodelArmL);
     }
 
     private void clear() {
@@ -430,7 +583,12 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.viewmodelArmR = Transform.identity();
             this.viewmodelArmL = Transform.identity();
             this.animations.clear();
+            this.profiles.clear();
+            this.itemProfileRules.clear();
+            this.tagProfileRules.clear();
             this.animation = Animation.empty();
+            this.fallbackProfileId = null;
+            this.activeProfileId = null;
             this.state = State.IDLE;
             this.currentClip = Clip.INSPECT;
             this.visualStack = ItemStack.EMPTY;
@@ -592,7 +750,15 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private enum Clip {
         INSPECT,
         PULLOUT,
-        PUTAWAY
+        PUTAWAY;
+
+        private String configKey() {
+            return switch (this) {
+                case INSPECT -> "inspect";
+                case PULLOUT -> "pullout";
+                case PUTAWAY -> "putaway";
+            };
+        }
     }
 
     private enum State {
@@ -621,6 +787,28 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         public String jsonName() {
             return this.jsonName;
         }
+    }
+
+    private record TagProfileRule(TagKey<Item> tag, ResourceLocation profileId) {
+    }
+
+    private record ProfileBindPose(
+            Transform viewmodelCamera,
+            Transform itemRoot,
+            Transform blockRoot,
+            Transform viewmodelArmR,
+            Transform viewmodelArmL
+    ) {
+    }
+
+    private record AnimationProfile(
+            Transform viewmodelCamera,
+            Transform itemRoot,
+            Transform blockRoot,
+            Transform viewmodelArmR,
+            Transform viewmodelArmL,
+            EnumMap<Clip, Animation> animations
+    ) {
     }
 
     private record Animation(boolean loop, List<AnimationFrame> frames) {

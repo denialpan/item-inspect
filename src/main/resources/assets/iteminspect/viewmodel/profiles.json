@@ -1,0 +1,12 @@
+{
+  "items": {
+    "tacz:ammo_box": "iteminspect:viewmodel/default/profile.json",
+    "minecraft:golden_apple": "iteminspect:viewmodel/default/profile.json"
+  },
+  "tags": [
+    {
+      "id": "minecraft:swords",
+      "profile": "iteminspect:viewmodel/default/profile.json"
+    }
+  ]
+}
