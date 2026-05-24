@@ -1,4 +1,5 @@
 {
+  "default": "iteminspect:viewmodel/default/profile.json",
   "empty_hands": "iteminspect:viewmodel/empty_hands/profile.json",
   "items": {
     "tacz:ammo_box": "iteminspect:viewmodel/swords/profile.json",

@@ -168,6 +168,6 @@ public class iteminspectClient {
         }
 
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
-        return "tacz".equals(itemId.getNamespace()) && !ViewmodelPose.INSTANCE.hasProfileFor(stack);
+        return "tacz".equals(itemId.getNamespace()) && !ViewmodelPose.INSTANCE.hasSpecificProfileFor(stack);
     }
 }

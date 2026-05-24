@@ -141,6 +141,10 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return this.resolveProfile(stack, allowEmptyHands) != null;
     }
 
+    public boolean hasSpecificProfileFor(ItemStack stack) {
+        return !stack.isEmpty() && this.resolveSpecificProfile(stack) != null;
+    }
+
     public ItemStack visualStackOr(ItemStack fallback) {
         return this.visualStack.isEmpty() ? fallback : this.visualStack;
     }
@@ -367,6 +371,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             return allowEmptyHands ? this.emptyHandsProfileId : null;
         }
 
+        ResourceLocation profileId = this.resolveSpecificProfile(stack);
+        return profileId == null ? this.fallbackProfileId : profileId;
+    }
+
+    private ResourceLocation resolveSpecificProfile(ItemStack stack) {
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
         ResourceLocation itemProfile = this.itemProfileRules.get(itemId);
         if (itemProfile != null) {
@@ -379,7 +388,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             }
         }
 
-        return this.fallbackProfileId;
+        return null;
     }
 
     private void finishCurrentClip(ItemStack selectedStack) {
@@ -485,8 +494,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     private void loadProfileIndex(ResourceManager resourceManager, JsonObject root) {
-        if (root.has("fallback") && !root.get("fallback").isJsonNull()) {
-            this.fallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "fallback"));
+        String fallbackKey = root.has("default") ? "default" : "fallback";
+        if (root.has(fallbackKey) && !root.get(fallbackKey).isJsonNull()) {
+            this.fallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, fallbackKey));
             this.ensureProfileLoaded(resourceManager, this.fallbackProfileId);
         }
 
