@@ -34,14 +34,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final String MODID = "iteminspect";
     private static final ResourceLocation PROFILE_INDEX_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/profiles.json");
-    private static final ResourceLocation INSPECT_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default/default_inspect.json");
-    private static final ResourceLocation PULLOUT_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default/default_pullout.json");
-    private static final ResourceLocation PULLOUT_TYPO_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default/defualt_pullout.json");
-    private static final ResourceLocation PUTAWAY_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default/default_putaway.json");
-    private static final ResourceLocation LEGACY_INSPECT_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default_inspect.json");
-    private static final ResourceLocation LEGACY_PULLOUT_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default_pullout.json");
-    private static final ResourceLocation LEGACY_PULLOUT_TYPO_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/defualt_pullout.json");
-    private static final ResourceLocation LEGACY_PUTAWAY_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/default_putaway.json");
     private static final int RESTART_BLEND_TICKS = 4;
     private static final int CANCEL_BLEND_TICKS = 4;
     private static final int EQUIP_BLEND_WINDOW_TICKS = 6;
@@ -57,11 +49,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private final List<TagProfileRule> tagProfileRules = new ArrayList<>();
     private Animation animation = Animation.empty();
     private ResourceLocation fallbackProfileId;
+    private ResourceLocation emptyHandsProfileId;
     private ResourceLocation activeProfileId;
+    private boolean visualStackWasEmpty;
     private State state = State.IDLE;
     private Clip currentClip = Clip.INSPECT;
     private ItemStack visualStack = ItemStack.EMPTY;
     private ItemStack queuedPulloutStack = ItemStack.EMPTY;
+    private boolean queuedPulloutAllowsEmptyHands;
     private EnumMap<Bone, Transform> restartBlendFrom = new EnumMap<>(Bone.class);
     private EnumMap<Bone, Transform> cancelBlendFrom = new EnumMap<>(Bone.class);
     private int animationTick;
@@ -139,7 +134,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public boolean hasProfileFor(ItemStack stack) {
-        return this.resolveProfile(stack) != null;
+        return this.hasProfileFor(stack, false);
+    }
+
+    public boolean hasProfileFor(ItemStack stack, boolean allowEmptyHands) {
+        return this.resolveProfile(stack, allowEmptyHands) != null;
     }
 
     public ItemStack visualStackOr(ItemStack fallback) {
@@ -147,50 +146,62 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public void startInspect(ItemStack stack) {
+        this.startInspect(stack, false);
+    }
+
+    public void startInspect(ItemStack stack, boolean allowEmptyHands) {
         if (this.state == State.PULLOUT || this.state == State.PUTAWAY || this.equipBlendWindowTick > 0) {
             return;
         }
-        if (!this.activateProfile(stack)) {
+        if (!this.activateProfile(stack, allowEmptyHands)) {
             return;
         }
         this.playClip(Clip.INSPECT, stack, State.INSPECT);
     }
 
     public void onHotbarChanged(ItemStack oldStack, ItemStack newStack) {
+        this.onHotbarChanged(oldStack, newStack, false, false);
+    }
+
+    public void onHotbarChanged(ItemStack oldStack, ItemStack newStack, boolean oldAllowsEmptyHands, boolean newAllowsEmptyHands) {
         this.queuedPulloutStack = newStack.copy();
+        this.queuedPulloutAllowsEmptyHands = newAllowsEmptyHands;
         if (this.state == State.PUTAWAY) {
             return;
         }
 
         if (this.state == State.PULLOUT) {
-            ItemStack putawayStack = !this.visualStack.isEmpty() ? this.visualStack.copy() : oldStack.copy();
-            if (!this.startPutaway(putawayStack)) {
+            ItemStack putawayStack = this.visualStackOr(oldStack).copy();
+            if (!this.startPutaway(putawayStack, this.visualStackWasEmpty || oldAllowsEmptyHands)) {
                 this.visualStack = ItemStack.EMPTY;
+                this.visualStackWasEmpty = false;
                 this.state = State.IDLE;
                 this.playing = false;
                 this.animationTick = 0;
                 this.restartBlendFrom.clear();
-                this.startPullout(newStack);
+                this.startPullout(newStack, newAllowsEmptyHands);
             }
             return;
         }
 
-        ItemStack putawayStack = !this.visualStack.isEmpty() ? this.visualStack.copy() : oldStack.copy();
-        if (!putawayStack.isEmpty() && (this.state == State.READY || this.state == State.INSPECT)) {
-            if (this.startPutaway(putawayStack)) {
+        ItemStack putawayStack = this.visualStackOr(oldStack).copy();
+        boolean canPutAway = this.hasProfileFor(putawayStack, this.visualStackWasEmpty || oldAllowsEmptyHands);
+        if (canPutAway && (this.state == State.READY || this.state == State.INSPECT || oldAllowsEmptyHands)) {
+            if (this.startPutaway(putawayStack, this.visualStackWasEmpty || oldAllowsEmptyHands)) {
                 return;
             }
             this.visualStack = ItemStack.EMPTY;
+            this.visualStackWasEmpty = false;
             this.state = State.IDLE;
-            this.startPullout(newStack);
+            this.startPullout(newStack, newAllowsEmptyHands);
             return;
         }
 
-        this.startPullout(newStack);
+        this.startPullout(newStack, newAllowsEmptyHands);
     }
 
-    private boolean startPutaway(ItemStack stack) {
-        if (stack.isEmpty()) {
+    private boolean startPutaway(ItemStack stack, boolean allowEmptyHands) {
+        if (!this.activateProfile(stack, allowEmptyHands)) {
             return false;
         }
 
@@ -198,18 +209,19 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public void startPullout(ItemStack stack) {
-        if (stack.isEmpty()) {
+        this.startPullout(stack, false);
+    }
+
+    public void startPullout(ItemStack stack, boolean allowEmptyHands) {
+        if (!this.activateProfile(stack, allowEmptyHands)) {
             this.visualStack = ItemStack.EMPTY;
-            this.state = State.IDLE;
-            return;
-        }
-        if (!this.activateProfile(stack)) {
-            this.visualStack = ItemStack.EMPTY;
+            this.visualStackWasEmpty = false;
             this.state = State.IDLE;
             return;
         }
         if (!this.playClip(Clip.PULLOUT, stack, State.PULLOUT)) {
             this.visualStack = stack.copy();
+            this.visualStackWasEmpty = stack.isEmpty();
             this.state = State.READY;
         }
     }
@@ -244,6 +256,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.animation = nextAnimation;
             this.state = targetState;
             this.visualStack = stack.copy();
+            this.visualStackWasEmpty = stack.isEmpty();
             this.playing = true;
             return true;
         }
@@ -270,7 +283,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.animationTick = 0;
         this.skipNextAnimationTick = false;
         this.playing = false;
-        this.state = this.visualStack.isEmpty() ? State.IDLE : State.READY;
+        this.state = this.visualStack.isEmpty() && !this.visualStackWasEmpty ? State.IDLE : State.READY;
         this.restartBlendFrom.clear();
     }
 
@@ -284,7 +297,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.currentClip = Clip.INSPECT;
         this.activeProfileId = null;
         this.visualStack = ItemStack.EMPTY;
+        this.visualStackWasEmpty = false;
         this.queuedPulloutStack = ItemStack.EMPTY;
+        this.queuedPulloutAllowsEmptyHands = false;
         this.restartBlendFrom.clear();
         this.cancelBlendFrom.clear();
     }
@@ -320,8 +335,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.tickAnimation(ItemStack.EMPTY);
     }
 
-    private boolean activateProfile(ItemStack stack) {
-        ResourceLocation profileId = this.resolveProfile(stack);
+    private boolean activateProfile(ItemStack stack, boolean allowEmptyHands) {
+        ResourceLocation profileId = this.resolveProfile(stack, allowEmptyHands);
         if (profileId == null) {
             return false;
         }
@@ -347,9 +362,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return true;
     }
 
-    private ResourceLocation resolveProfile(ItemStack stack) {
+    private ResourceLocation resolveProfile(ItemStack stack, boolean allowEmptyHands) {
         if (stack.isEmpty()) {
-            return null;
+            return allowEmptyHands ? this.emptyHandsProfileId : null;
         }
 
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
@@ -369,7 +384,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     private void finishCurrentClip(ItemStack selectedStack) {
         if (this.currentClip == Clip.PULLOUT) {
-            if (!selectedStack.isEmpty() && !ItemStack.matches(this.visualStack, selectedStack)) {
+            if (!this.visualStackWasEmpty && !selectedStack.isEmpty() && !ItemStack.matches(this.visualStack, selectedStack)) {
                 this.cancelAllAnimations();
                 return;
             }
@@ -377,7 +392,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.animationTick = 0;
             this.skipNextAnimationTick = false;
             this.restartBlendFrom.clear();
-            this.state = this.visualStack.isEmpty() ? State.IDLE : State.READY;
+            this.state = this.visualStack.isEmpty() && !this.visualStackWasEmpty ? State.IDLE : State.READY;
             return;
         }
 
@@ -387,11 +402,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.skipNextAnimationTick = false;
             this.restartBlendFrom.clear();
             this.visualStack = ItemStack.EMPTY;
+            this.visualStackWasEmpty = false;
             this.state = State.IDLE;
             ItemStack nextStack = this.queuedPulloutStack.copy();
+            boolean nextAllowsEmptyHands = this.queuedPulloutAllowsEmptyHands;
             this.queuedPulloutStack = ItemStack.EMPTY;
-            if (!nextStack.isEmpty() && (selectedStack.isEmpty() || ItemStack.matches(nextStack, selectedStack))) {
-                this.startPullout(nextStack);
+            this.queuedPulloutAllowsEmptyHands = false;
+            if (this.hasProfileFor(nextStack, nextAllowsEmptyHands) && (selectedStack.isEmpty() || ItemStack.matches(nextStack, selectedStack))) {
+                this.startPullout(nextStack, nextAllowsEmptyHands);
             }
             return;
         }
@@ -470,6 +488,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         if (root.has("fallback") && !root.get("fallback").isJsonNull()) {
             this.fallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "fallback"));
             this.ensureProfileLoaded(resourceManager, this.fallbackProfileId);
+        }
+
+        if (root.has("empty_hands") && !root.get("empty_hands").isJsonNull()) {
+            this.emptyHandsProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "empty_hands"));
+            this.ensureProfileLoaded(resourceManager, this.emptyHandsProfileId);
         }
 
         if (root.has("items")) {
@@ -588,11 +611,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.tagProfileRules.clear();
             this.animation = Animation.empty();
             this.fallbackProfileId = null;
+            this.emptyHandsProfileId = null;
             this.activeProfileId = null;
+            this.visualStackWasEmpty = false;
             this.state = State.IDLE;
             this.currentClip = Clip.INSPECT;
             this.visualStack = ItemStack.EMPTY;
             this.queuedPulloutStack = ItemStack.EMPTY;
+            this.queuedPulloutAllowsEmptyHands = false;
             this.playing = false;
             this.animationTick = 0;
             this.skipNextAnimationTick = false;

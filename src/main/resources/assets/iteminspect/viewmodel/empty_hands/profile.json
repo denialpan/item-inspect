@@ -1,0 +1,7 @@
+{
+  "clips": {
+    "inspect": "iteminspect:viewmodel/empty_hands/empty_hands_inspect.json",
+    "pullout": "iteminspect:viewmodel/empty_hands/empty_hands_pullout.json",
+    "putaway": "iteminspect:viewmodel/empty_hands/empty_hands_putaway.json"
+  }
+}

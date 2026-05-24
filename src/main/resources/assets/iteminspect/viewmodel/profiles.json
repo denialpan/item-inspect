@@ -1,12 +1,13 @@
 {
+  "empty_hands": "iteminspect:viewmodel/empty_hands/profile.json",
   "items": {
-    "tacz:ammo_box": "iteminspect:viewmodel/default/profile.json",
-    "minecraft:golden_apple": "iteminspect:viewmodel/default/profile.json"
+    "tacz:ammo_box": "iteminspect:viewmodel/swords/profile.json",
+    "minecraft:golden_apple": "iteminspect:viewmodel/swords/profile.json"
   },
   "tags": [
     {
       "id": "minecraft:swords",
-      "profile": "iteminspect:viewmodel/default/profile.json"
+      "profile": "iteminspect:viewmodel/swords/profile.json"
     }
   ]
 }
