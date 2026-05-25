@@ -18,6 +18,7 @@ Animation export:
     - samples every integer frame from Blender frame 1 through that last frame
     - samples evaluated dependency-graph matrices so pose constraints are included
     - keeps the static "bones" pose from the hidden Minecraft-space export anchors
+    - exports sound strips from the active scene's Video Sequencer as sound events
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "src/main/resources/assets/iteminspect/viewmodel/default_pose.json"
 DEFAULT_ANIMATION_NAME = "default"
 DEFAULT_ACTION_NAME = None
+DEFAULT_SOUND_NAMESPACE = "iteminspect"
 AUTHORING_TO_MINECRAFT_MATRIX = Matrix.Rotation(math.radians(-90.0), 4, "X")
 
 EXPORT_SOURCES = {
@@ -289,6 +291,74 @@ def export_animation(start_frame: int, end_frame: int):
     return frames
 
 
+def export_sound_events(start_frame: int, end_frame: int):
+    scene = bpy.context.scene
+    sequence_editor = scene.sequence_editor
+    if sequence_editor is None:
+        return []
+
+    events = []
+    for strip in sequence_editor.sequences_all:
+        if strip.type != "SOUND":
+            continue
+
+        frame = int(round(strip.frame_final_start))
+        if frame < start_frame or frame > end_frame:
+            continue
+
+        sound_id = sound_id_from_strip(strip)
+        event = {
+            "frame": frame,
+            "type": "sound",
+            "sound": sound_id,
+        }
+
+        volume = strip.get("volume")
+        if volume is None and hasattr(strip, "volume"):
+            volume = strip.volume
+        if volume is not None:
+            event["volume"] = round(float(volume), 4)
+
+        pitch = strip.get("pitch")
+        if pitch is not None:
+            event["pitch"] = round(float(pitch), 4)
+
+        events.append(event)
+
+    events.sort(key=lambda event: (event["frame"], event["sound"]))
+    return events
+
+
+def sound_id_from_strip(strip) -> str:
+    custom_sound = strip.get("minecraft_sound") or strip.get("sound")
+    if custom_sound:
+        return normalize_sound_id(str(custom_sound))
+
+    if ":" in strip.name:
+        return normalize_sound_id(strip.name)
+
+    if strip.sound is not None:
+        filepath = bpy.path.abspath(strip.sound.filepath)
+        stem = Path(filepath).stem if filepath else strip.sound.name
+        if stem:
+            return normalize_sound_id(stem)
+
+    return normalize_sound_id(strip.name)
+
+
+def normalize_sound_id(value: str) -> str:
+    sound_id = value.strip().replace("\\", "/").replace(" ", "_")
+    if sound_id.lower().endswith(".ogg"):
+        sound_id = sound_id[:-4]
+    if ":" not in sound_id:
+        sound_id = f"{DEFAULT_SOUND_NAMESPACE}:{sound_id}"
+
+    namespace, path = sound_id.split(":", 1)
+    if path.startswith("sounds/"):
+        path = path.removeprefix("sounds/")
+    return f"{namespace.lower()}:{path.lower()}"
+
+
 def output_path_from_args() -> Path:
     if "--" not in sys.argv:
         return DEFAULT_OUTPUT
@@ -326,15 +396,20 @@ def main() -> None:
 
         if end_frame is not None and end_frame >= start_frame:
             animation_name = animation_name_from_args()
+            events = export_sound_events(start_frame, end_frame)
+            animation_data = {
+                "fps": bpy.context.scene.render.fps,
+                "start_frame": start_frame,
+                "end_frame": end_frame,
+                "length_frames": end_frame - start_frame + 1,
+                "loop": True,
+                "frames": export_animation(start_frame, end_frame),
+            }
+            if events:
+                animation_data["events"] = events
+
             data["animations"] = {
-                animation_name: {
-                    "fps": bpy.context.scene.render.fps,
-                    "start_frame": start_frame,
-                    "end_frame": end_frame,
-                    "length_frames": end_frame - start_frame + 1,
-                    "loop": True,
-                    "frames": export_animation(start_frame, end_frame),
-                }
+                animation_name: animation_data
             }
     finally:
         if armature.animation_data is not None:

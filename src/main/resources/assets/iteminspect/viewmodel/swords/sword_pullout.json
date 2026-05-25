@@ -2286,6 +2286,14 @@
             }
           }
         }
+      ],
+      "events": [
+        {
+          "frame": 1,
+          "type": "sound",
+          "sound": "iteminspect:swords/sword_pullout",
+          "volume": 1.0
+        }
       ]
     }
   }

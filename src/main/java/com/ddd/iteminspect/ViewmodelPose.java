@@ -5,6 +5,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.logging.LogUtils;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.sounds.SimpleSoundInstance;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -20,6 +22,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.resources.Resource;
 import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
+import net.minecraft.sounds.SoundEvent;
 import net.minecraft.tags.TagKey;
 import net.minecraft.util.GsonHelper;
 import net.minecraft.world.item.Item;
@@ -62,6 +65,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private int animationTick;
     private int cancelBlendTick;
     private int equipBlendWindowTick;
+    private int nextSoundEventIndex;
     private boolean skipNextAnimationTick;
     private boolean playing;
     private boolean loaded;
@@ -255,6 +259,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.cancelBlendTick = 0;
             this.equipBlendWindowTick = 0;
             this.animationTick = 0;
+            this.nextSoundEventIndex = 0;
             this.skipNextAnimationTick = true;
             this.currentClip = clip;
             this.animation = nextAnimation;
@@ -262,6 +267,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.visualStack = stack.copy();
             this.visualStackWasEmpty = stack.isEmpty();
             this.playing = true;
+            this.playPendingSoundEvents(this.animation.startFrame());
             return true;
         }
         return false;
@@ -285,6 +291,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.cancelBlendTick = 0;
         }
         this.animationTick = 0;
+        this.nextSoundEventIndex = 0;
         this.skipNextAnimationTick = false;
         this.playing = false;
         this.state = this.visualStack.isEmpty() && !this.visualStackWasEmpty ? State.IDLE : State.READY;
@@ -293,6 +300,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     public void cancelAllAnimations() {
         this.animationTick = 0;
+        this.nextSoundEventIndex = 0;
         this.skipNextAnimationTick = false;
         this.cancelBlendTick = 0;
         this.equipBlendWindowTick = 0;
@@ -330,6 +338,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
 
         this.animationTick++;
+        this.playPendingSoundEvents(this.animation.startFrame() + this.animationTick);
         if (this.animationTick >= this.animation.length()) {
             this.finishCurrentClip(selectedStack);
         }
@@ -337,6 +346,19 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     public void tickAnimation() {
         this.tickAnimation(ItemStack.EMPTY);
+    }
+
+    private void playPendingSoundEvents(int currentFrame) {
+        List<AnimationSoundEvent> soundEvents = this.animation.soundEvents();
+        while (this.nextSoundEventIndex < soundEvents.size()) {
+            AnimationSoundEvent soundEvent = soundEvents.get(this.nextSoundEventIndex);
+            if (soundEvent.frame() > currentFrame) {
+                break;
+            }
+
+            soundEvent.play();
+            this.nextSoundEventIndex++;
+        }
     }
 
     private boolean activateProfile(ItemStack stack, boolean allowEmptyHands) {
@@ -636,6 +658,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.cancelBlendFrom.clear();
             this.cancelBlendTick = 0;
             this.equipBlendWindowTick = 0;
+            this.nextSoundEventIndex = 0;
             this.loaded = false;
     }
 
@@ -847,9 +870,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     ) {
     }
 
-    private record Animation(boolean loop, List<AnimationFrame> frames) {
+    private record Animation(boolean loop, int startFrame, List<AnimationFrame> frames, List<AnimationSoundEvent> soundEvents) {
         public static Animation empty() {
-            return new Animation(false, List.of());
+            return new Animation(false, 0, List.of(), List.of());
         }
 
         public static Animation read(JsonObject root, Transform cameraBind, Transform itemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
@@ -870,7 +893,30 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 frames.add(AnimationFrame.read(element.getAsJsonObject(), cameraBind, itemBind, blockBind, rightArmBind, leftArmBind));
             }
             frames.sort(Comparator.comparingInt(AnimationFrame::frame));
-            return frames.isEmpty() ? empty() : new Animation(loop, List.copyOf(frames));
+            List<AnimationSoundEvent> soundEvents = readSoundEvents(animationJson);
+            int startFrame = GsonHelper.getAsInt(animationJson, "start_frame", frames.isEmpty() ? 0 : frames.get(0).frame());
+            return frames.isEmpty() ? empty() : new Animation(loop, startFrame, List.copyOf(frames), soundEvents);
+        }
+
+        private static List<AnimationSoundEvent> readSoundEvents(JsonObject animationJson) {
+            if (!animationJson.has("events")) {
+                return List.of();
+            }
+
+            JsonArray eventArray = GsonHelper.getAsJsonArray(animationJson, "events");
+            List<AnimationSoundEvent> soundEvents = new ArrayList<>();
+            for (JsonElement element : eventArray) {
+                JsonObject eventJson = element.getAsJsonObject();
+                String type = GsonHelper.getAsString(eventJson, "type", "");
+                if (!"sound".equals(type)) {
+                    continue;
+                }
+
+                soundEvents.add(AnimationSoundEvent.read(eventJson));
+            }
+
+            soundEvents.sort(Comparator.comparingInt(AnimationSoundEvent::frame));
+            return List.copyOf(soundEvents);
         }
 
         public boolean isEmpty() {
@@ -898,6 +944,27 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         private static float positiveModulo(float value, int modulo) {
             float result = value % modulo;
             return result < 0.0F ? result + modulo : result;
+        }
+    }
+
+    private record AnimationSoundEvent(int frame, ResourceLocation sound, float volume, float pitch) {
+        public static AnimationSoundEvent read(JsonObject json) {
+            return new AnimationSoundEvent(
+                    GsonHelper.getAsInt(json, "frame"),
+                    ResourceLocation.parse(GsonHelper.getAsString(json, "sound")),
+                    GsonHelper.getAsFloat(json, "volume", 1.0F),
+                    GsonHelper.getAsFloat(json, "pitch", 1.0F)
+            );
+        }
+
+        public void play() {
+            Minecraft minecraft = Minecraft.getInstance();
+            if (minecraft.level == null) {
+                return;
+            }
+
+            SoundEvent soundEvent = SoundEvent.createVariableRangeEvent(this.sound);
+            minecraft.getSoundManager().play(SimpleSoundInstance.forUI(soundEvent, this.pitch, this.volume));
         }
     }
 
