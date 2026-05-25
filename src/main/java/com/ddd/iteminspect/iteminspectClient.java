@@ -26,12 +26,14 @@ import org.lwjgl.glfw.GLFW;
 public class iteminspectClient {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final int EXTERNAL_HANDOFF_TICKS = 8;
+    private static final int DROP_VANILLA_FALLBACK_TICKS = 4;
     private static boolean hasLastMainHandStack;
     private static ItemStack lastSelectedStack = ItemStack.EMPTY;
     private static boolean lastBothHandsEmpty;
     private static ItemStack queuedExternalHandoffStack = ItemStack.EMPTY;
     private static boolean queuedExternalHandoffAllowsEmptyHands;
     private static int externalHandoffTicks;
+    private static int dropVanillaFallbackTicks;
     private static final KeyMapping PLAY_VIEWMODEL_ANIMATION = new KeyMapping(
             "key.iteminspect.play_viewmodel_animation",
             InputConstants.Type.KEYSYM,
@@ -72,8 +74,19 @@ public class iteminspectClient {
             ItemStack selectedStack = minecraft.player.getMainHandItem();
             boolean bothHandsEmpty = selectedStack.isEmpty() && minecraft.player.getOffhandItem().isEmpty();
             selectedStackForTick = selectedStack;
+            if (minecraft.options.keyDrop.isDown()) {
+                dropVanillaFallbackTicks = DROP_VANILLA_FALLBACK_TICKS;
+                ViewmodelPose.INSTANCE.cancelAllAnimations();
+                clearExternalHandoff();
+            }
+
             if (hasLastMainHandStack && !sameMainHandItem(lastSelectedStack, selectedStack)) {
-                handleMainHandChanged(lastSelectedStack, selectedStack, lastBothHandsEmpty, bothHandsEmpty);
+                if (dropVanillaFallbackTicks > 0) {
+                    ViewmodelPose.INSTANCE.cancelAllAnimations();
+                    clearExternalHandoff();
+                } else {
+                    handleMainHandChanged(lastSelectedStack, selectedStack, lastBothHandsEmpty, bothHandsEmpty);
+                }
             } else if (lastBothHandsEmpty && !bothHandsEmpty) {
                 ViewmodelPose.INSTANCE.cancelAllAnimations();
                 clearExternalHandoff();
@@ -85,11 +98,15 @@ public class iteminspectClient {
             if (minecraft.options.keyAttack.isDown()) {
                 ViewmodelPose.INSTANCE.cancelAnimation();
             }
+            if (dropVanillaFallbackTicks > 0) {
+                dropVanillaFallbackTicks--;
+            }
         } else {
             hasLastMainHandStack = false;
             lastSelectedStack = ItemStack.EMPTY;
             lastBothHandsEmpty = false;
             selectedStackForTick = ItemStack.EMPTY;
+            dropVanillaFallbackTicks = 0;
             clearExternalHandoff();
             ViewmodelPose.INSTANCE.cancelAllAnimations();
         }
