@@ -26,14 +26,30 @@ public abstract class ItemInHandRendererMixin {
     @Shadow
     private float oMainHandHeight;
 
+    @Shadow
+    private ItemStack offHandItem;
+
+    @Shadow
+    private float offHandHeight;
+
+    @Shadow
+    private float oOffHandHeight;
+
     @Inject(method = "tick", at = @At("TAIL"))
     private void iteminspect$suppressMainHandEquipAnimation(CallbackInfo callbackInfo) {
-        if (this.minecraft.player == null || !ViewmodelPose.INSTANCE.shouldSuppressVanillaMainHandEquip()) {
+        if (this.minecraft.player == null) {
             return;
         }
 
-        this.mainHandItem = this.minecraft.player.getMainHandItem();
-        this.mainHandHeight = 1.0F;
-        this.oMainHandHeight = 1.0F;
+        if (ViewmodelPose.INSTANCE.shouldSuppressVanillaMainHandEquip()) {
+            this.mainHandItem = this.minecraft.player.getMainHandItem();
+            this.mainHandHeight = 1.0F;
+            this.oMainHandHeight = 1.0F;
+        }
+        if (ViewmodelPose.INSTANCE.shouldSuppressVanillaOffhandEquip()) {
+            this.offHandItem = this.minecraft.player.getOffhandItem();
+            this.offHandHeight = 1.0F;
+            this.oOffHandHeight = 1.0F;
+        }
     }
 }

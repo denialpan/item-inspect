@@ -42,6 +42,7 @@ AUTHORING_TO_MINECRAFT_MATRIX = Matrix.Rotation(math.radians(-90.0), 4, "X")
 EXPORT_SOURCES = {
     "viewmodel_camera": None,
     "item_root": "held_item_transform_anchor_firstperson_righthand",
+    "item_offhand_root": "held_item_transform_anchor_firstperson_lefthand",
     "block_root": "held_block_transform_anchor_firstperson_righthand",
     "viewmodel_arm_R": "viewmodel_arm_R_transform_anchor",
     "viewmodel_arm_L": None,
@@ -50,12 +51,13 @@ EXPORT_SOURCES = {
 ANIMATION_SOURCES = {
     "viewmodel_camera": None,
     "item_root": "held_item_transform_anchor_firstperson_righthand_display",
+    "item_offhand_root": "held_item_transform_anchor_firstperson_lefthand_display",
     "block_root": "held_block_transform_anchor_firstperson_righthand_display",
     "viewmodel_arm_R": "viewmodel_arm_R_transform_anchor_display",
     "viewmodel_arm_L": "viewmodel_arm_L_transform_anchor_display",
 }
 
-EXPORT_POSE_BONE_NAMES = {"viewmodel_camera", "item_root", "viewmodel_arm_R", "viewmodel_arm_L"}
+EXPORT_POSE_BONE_NAMES = {"viewmodel_camera", "item_root", "item_offhand_root", "viewmodel_arm_R", "viewmodel_arm_L"}
 
 
 def evaluated_matrix_world(obj: bpy.types.Object):

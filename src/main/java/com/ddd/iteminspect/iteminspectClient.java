@@ -34,6 +34,8 @@ public class iteminspectClient {
     private static boolean queuedExternalHandoffAllowsEmptyHands;
     private static int externalHandoffTicks;
     private static int dropVanillaFallbackTicks;
+    private static ItemStack lastOffhandStack = ItemStack.EMPTY;
+    private static boolean hasLastOffhandStack;
     private static final KeyMapping PLAY_VIEWMODEL_ANIMATION = new KeyMapping(
             "key.iteminspect.play_viewmodel_animation",
             InputConstants.Type.KEYSYM,
@@ -72,7 +74,8 @@ public class iteminspectClient {
         ItemStack selectedStackForTick = ItemStack.EMPTY;
         if (minecraft.player != null) {
             ItemStack selectedStack = minecraft.player.getMainHandItem();
-            boolean bothHandsEmpty = selectedStack.isEmpty() && minecraft.player.getOffhandItem().isEmpty();
+            ItemStack offhandStack = minecraft.player.getOffhandItem();
+            boolean bothHandsEmpty = selectedStack.isEmpty() && offhandStack.isEmpty();
             selectedStackForTick = selectedStack;
             if (minecraft.options.keyDrop.isDown()) {
                 dropVanillaFallbackTicks = DROP_VANILLA_FALLBACK_TICKS;
@@ -80,19 +83,31 @@ public class iteminspectClient {
                 clearExternalHandoff();
             }
 
-            if (hasLastMainHandStack && !sameMainHandItem(lastSelectedStack, selectedStack)) {
+            boolean mainHandChanged = hasLastMainHandStack && !sameMainHandItem(lastSelectedStack, selectedStack);
+            boolean offhandChanged = hasLastOffhandStack && !sameMainHandItem(lastOffhandStack, offhandStack);
+            if (mainHandChanged) {
                 if (dropVanillaFallbackTicks > 0) {
                     ViewmodelPose.INSTANCE.cancelAllAnimations();
                     clearExternalHandoff();
                 } else {
                     handleMainHandChanged(lastSelectedStack, selectedStack, lastBothHandsEmpty, bothHandsEmpty);
                 }
-            } else if (lastBothHandsEmpty && !bothHandsEmpty) {
+            }
+            if (offhandChanged) {
+                if (dropVanillaFallbackTicks > 0) {
+                    ViewmodelPose.INSTANCE.cancelAllAnimations();
+                    clearExternalHandoff();
+                } else {
+                    handleOffhandChanged(lastOffhandStack, offhandStack);
+                }
+            } else if (!mainHandChanged && lastBothHandsEmpty && !bothHandsEmpty) {
                 ViewmodelPose.INSTANCE.cancelAllAnimations();
                 clearExternalHandoff();
             }
             hasLastMainHandStack = true;
+            hasLastOffhandStack = true;
             lastSelectedStack = selectedStack.copy();
+            lastOffhandStack = offhandStack.copy();
             lastBothHandsEmpty = bothHandsEmpty;
             tickExternalHandoff(selectedStack, bothHandsEmpty);
             if (minecraft.options.keyAttack.isDown()) {
@@ -103,7 +118,9 @@ public class iteminspectClient {
             }
         } else {
             hasLastMainHandStack = false;
+            hasLastOffhandStack = false;
             lastSelectedStack = ItemStack.EMPTY;
+            lastOffhandStack = ItemStack.EMPTY;
             lastBothHandsEmpty = false;
             selectedStackForTick = ItemStack.EMPTY;
             dropVanillaFallbackTicks = 0;
@@ -115,7 +132,8 @@ public class iteminspectClient {
             ItemStack selectedStack = minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getMainHandItem();
             if (!isExternalItem(selectedStack) && externalHandoffTicks <= 0) {
                 boolean bothHandsEmpty = minecraft.player != null && selectedStack.isEmpty() && minecraft.player.getOffhandItem().isEmpty();
-                ViewmodelPose.INSTANCE.startInspect(selectedStack, bothHandsEmpty);
+                ItemStack offhandStack = minecraft.player == null ? ItemStack.EMPTY : minecraft.player.getOffhandItem();
+                ViewmodelPose.INSTANCE.startInspect(selectedStack, offhandStack, bothHandsEmpty);
             }
         }
         ViewmodelPose.INSTANCE.tickAnimation(selectedStackForTick);
@@ -138,6 +156,16 @@ public class iteminspectClient {
 
         clearExternalHandoff();
         ViewmodelPose.INSTANCE.onHotbarChanged(oldStack, newStack, oldBothHandsEmpty, newBothHandsEmpty);
+    }
+
+    private static void handleOffhandChanged(ItemStack oldStack, ItemStack newStack) {
+        if (isExternalItem(oldStack) || isExternalItem(newStack)) {
+            ViewmodelPose.INSTANCE.cancelAllAnimations();
+            clearExternalHandoff();
+            return;
+        }
+
+        ViewmodelPose.INSTANCE.onOffhandChanged(oldStack, newStack);
     }
 
     private static boolean sameMainHandItem(ItemStack oldStack, ItemStack newStack) {

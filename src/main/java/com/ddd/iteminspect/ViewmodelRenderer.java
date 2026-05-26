@@ -45,7 +45,7 @@ public final class ViewmodelRenderer {
     @SubscribeEvent
     public static void onRenderHand(RenderHandEvent event) {
         Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.player == null || minecraft.level == null || event.getHand() != InteractionHand.MAIN_HAND) {
+        if (minecraft.player == null || minecraft.level == null) {
             return;
         }
 
@@ -55,7 +55,16 @@ public final class ViewmodelRenderer {
             return;
         }
 
+        if (event.getHand() == InteractionHand.OFF_HAND) {
+            event.setCanceled(true);
+            return;
+        }
+        if (event.getHand() != InteractionHand.MAIN_HAND) {
+            return;
+        }
+
         ItemStack stack = pose.visualStackOr(event.getItemStack());
+        ItemStack offhandStack = pose.visualOffhandStackOr(minecraft.player.getOffhandItem());
         event.setCanceled(true);
 
         boolean leftMainHand = minecraft.player.getMainArm() == HumanoidArm.LEFT;
@@ -84,36 +93,45 @@ public final class ViewmodelRenderer {
                 poseStack.popPose();
             }
 
-            if (!stack.isEmpty()) {
-                poseStack.pushPose();
-                if (stack.getItem() instanceof BlockItem) {
-                    if (leftMainHand) {
-                        pose.leftBlockRoot(event.getPartialTick()).apply(poseStack);
-                    } else {
-                        pose.blockRoot(event.getPartialTick()).apply(poseStack);
-                    }
-                } else if (leftMainHand) {
-                    pose.leftItemRoot(event.getPartialTick()).apply(poseStack);
-                } else {
-                    pose.itemRoot(event.getPartialTick()).apply(poseStack);
-                }
-
-                minecraft.getItemRenderer().renderStatic(
-                        minecraft.player,
-                        stack,
-                        leftMainHand ? ItemDisplayContext.FIRST_PERSON_LEFT_HAND : ItemDisplayContext.FIRST_PERSON_RIGHT_HAND,
-                        leftMainHand,
-                        poseStack,
-                        event.getMultiBufferSource(),
-                        minecraft.level,
-                        event.getPackedLight(),
-                        OverlayTexture.NO_OVERLAY,
-                        minecraft.player.getId()
-                );
-                poseStack.popPose();
-            }
+            renderHeldItem(event, pose, stack, leftMainHand);
+            renderHeldItem(event, pose, offhandStack, !leftMainHand);
         } finally {
             poseStack.popPose();
         }
+    }
+
+    private static void renderHeldItem(RenderHandEvent event, ViewmodelPose pose, ItemStack stack, boolean leftHand) {
+        if (stack.isEmpty()) {
+            return;
+        }
+
+        Minecraft minecraft = Minecraft.getInstance();
+        PoseStack poseStack = event.getPoseStack();
+        poseStack.pushPose();
+        if (stack.getItem() instanceof BlockItem) {
+            if (leftHand) {
+                pose.leftBlockRoot(event.getPartialTick()).apply(poseStack);
+            } else {
+                pose.blockRoot(event.getPartialTick()).apply(poseStack);
+            }
+        } else if (leftHand) {
+            pose.leftItemRoot(event.getPartialTick()).apply(poseStack);
+        } else {
+            pose.itemRoot(event.getPartialTick()).apply(poseStack);
+        }
+
+        minecraft.getItemRenderer().renderStatic(
+                minecraft.player,
+                stack,
+                leftHand ? ItemDisplayContext.FIRST_PERSON_LEFT_HAND : ItemDisplayContext.FIRST_PERSON_RIGHT_HAND,
+                leftHand,
+                poseStack,
+                event.getMultiBufferSource(),
+                minecraft.level,
+                event.getPackedLight(),
+                OverlayTexture.NO_OVERLAY,
+                leftHand ? minecraft.player.getId() + 1 : minecraft.player.getId()
+        );
+        poseStack.popPose();
     }
 }

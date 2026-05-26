@@ -8,7 +8,26 @@
   "tags": [
     {
       "id": "minecraft:swords",
-      "profile": "iteminspect:viewmodel/swords/profile.json"
+      "profile": "iteminspect:viewmodel/swords/profile_primary.json"
+    }
+  ],
+  "offhand": {
+    "tags": [
+      {
+        "id": "minecraft:swords",
+        "profile": "iteminspect:viewmodel/swords/profile_secondary.json"
+      }
+    ]
+  },
+  "both_hands": [
+    {
+      "main": {
+        "tag": "minecraft:swords"
+      },
+      "offhand": {
+        "tag": "minecraft:swords"
+      },
+      "profile": "iteminspect:viewmodel/swords/profile_both.json"
     }
   ]
 }

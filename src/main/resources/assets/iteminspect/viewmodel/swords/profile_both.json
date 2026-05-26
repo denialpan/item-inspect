@@ -1,6 +1,6 @@
 {
   "clips": {
-    "inspect": "iteminspect:viewmodel/swords/sword_primary_inspect.json",
+    "inspect": "iteminspect:viewmodel/swords/sword_both_inspect.json",
     "pullout": "iteminspect:viewmodel/swords/sword_primary_pullout.json",
     "putaway": "iteminspect:viewmodel/swords/sword_primary_putaway.json"
   }
