@@ -1,6 +1,7 @@
 {
-  "default": "iteminspect:viewmodel/default/profile.json",
-  "empty_hands": "iteminspect:viewmodel/empty_hands/profile.json",
+  "default": "iteminspect:viewmodel/default/profile_primary.json",
+  "offhand_default": "iteminspect:viewmodel/default/profile_secondary.json",
+  "both_hands_default": "iteminspect:viewmodel/default/profile_both.json",
   "items": {
     "tacz:ammo_box": "iteminspect:viewmodel/swords/profile.json",
     "minecraft:golden_apple": "iteminspect:viewmodel/swords/profile.json"

@@ -112,7 +112,7 @@
     }
   },
   "animations": {
-    "default": {
+    "sword_secondary_putaway": {
       "fps": 20,
       "start_frame": 1,
       "end_frame": 10,

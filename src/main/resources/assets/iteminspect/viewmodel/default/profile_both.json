@@ -1,6 +1,6 @@
 {
   "clips": {
-    "inspect": "iteminspect:viewmodel/default/default_primary_inspect.json",
+    "inspect": "iteminspect:viewmodel/default/default_both_inspect.json",
     "pullout": "iteminspect:viewmodel/default/default_primary_pullout.json",
     "putaway": "iteminspect:viewmodel/default/default_primary_putaway.json"
   }

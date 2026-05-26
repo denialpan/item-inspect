@@ -55,6 +55,27 @@ public final class ViewmodelRenderer {
             return;
         }
 
+        boolean leftMainHand = minecraft.player.getMainArm() == HumanoidArm.LEFT;
+        if (!pose.isSharedPlaying()) {
+            if (event.getHand() == InteractionHand.MAIN_HAND) {
+                if (!pose.isMainHandLayerActive()) {
+                    return;
+                }
+                event.setCanceled(true);
+                renderLayerHand(event, pose, pose.visualStackOr(event.getItemStack()), true, leftMainHand);
+                return;
+            }
+
+            if (event.getHand() == InteractionHand.OFF_HAND) {
+                if (!pose.isOffhandLayerActive()) {
+                    return;
+                }
+                event.setCanceled(true);
+                renderLayerHand(event, pose, pose.visualOffhandStackOr(minecraft.player.getOffhandItem()), false, leftMainHand);
+            }
+            return;
+        }
+
         if (event.getHand() == InteractionHand.OFF_HAND) {
             event.setCanceled(true);
             return;
@@ -67,7 +88,6 @@ public final class ViewmodelRenderer {
         ItemStack offhandStack = pose.visualOffhandStackOr(minecraft.player.getOffhandItem());
         event.setCanceled(true);
 
-        boolean leftMainHand = minecraft.player.getMainArm() == HumanoidArm.LEFT;
         poseStack.pushPose();
         pose.viewmodelCamera(event.getPartialTick()).apply(poseStack);
 
@@ -95,6 +115,40 @@ public final class ViewmodelRenderer {
 
             renderHeldItem(event, pose, stack, leftMainHand);
             renderHeldItem(event, pose, offhandStack, !leftMainHand);
+        } finally {
+            poseStack.popPose();
+        }
+    }
+
+    private static void renderLayerHand(RenderHandEvent event, ViewmodelPose pose, ItemStack stack, boolean mainLayer, boolean leftMainHand) {
+        Minecraft minecraft = Minecraft.getInstance();
+        PoseStack poseStack = event.getPoseStack();
+        poseStack.pushPose();
+        boolean itemInLeftHand = mainLayer == leftMainHand;
+
+        try {
+            EntityRenderer<?> renderer = minecraft.getEntityRenderDispatcher().getRenderer(minecraft.player);
+            if (renderer instanceof PlayerRenderer playerRenderer) {
+                poseStack.pushPose();
+                if (mainLayer) {
+                    if (leftMainHand) {
+                        pose.viewmodelArmL(event.getPartialTick()).mirroredTransform().apply(poseStack);
+                    } else {
+                        pose.viewmodelArmR(event.getPartialTick()).apply(poseStack);
+                    }
+                    playerRenderer.renderRightHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
+                } else {
+                    if (leftMainHand) {
+                        pose.viewmodelArmR(event.getPartialTick()).mirroredTransform().apply(poseStack);
+                    } else {
+                        pose.viewmodelArmL(event.getPartialTick()).apply(poseStack);
+                    }
+                    playerRenderer.renderLeftHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
+                }
+                poseStack.popPose();
+            }
+
+            renderHeldItem(event, pose, stack, itemInLeftHand);
         } finally {
             poseStack.popPose();
         }

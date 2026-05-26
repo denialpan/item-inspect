@@ -112,7 +112,7 @@
     }
   },
   "animations": {
-    "default": {
+    "sword_primary_inspect": {
       "fps": 20,
       "start_frame": 1,
       "end_frame": 50,
