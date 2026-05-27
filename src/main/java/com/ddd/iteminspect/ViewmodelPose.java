@@ -647,18 +647,35 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     private void loadProfileIndex(ResourceManager resourceManager, JsonObject root) {
-        String fallbackKey = root.has("default") ? "default" : "fallback";
-        if (root.has(fallbackKey) && !root.get(fallbackKey).isJsonNull()) {
-            this.fallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, fallbackKey));
+        JsonObject primaryRoot = root.has("primary") ? GsonHelper.getAsJsonObject(root, "primary") : null;
+        JsonObject secondaryRoot = root.has("secondary") ? GsonHelper.getAsJsonObject(root, "secondary") : null;
+        JsonObject bothRoot = root.has("both") ? GsonHelper.getAsJsonObject(root, "both") : null;
+
+        JsonObject primaryFallbackRoot = primaryRoot == null ? root : primaryRoot;
+        String fallbackKey = primaryFallbackRoot.has("default") ? "default" : "fallback";
+        if (primaryFallbackRoot.has(fallbackKey) && !primaryFallbackRoot.get(fallbackKey).isJsonNull()) {
+            this.fallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(primaryFallbackRoot, fallbackKey));
             this.ensureProfileLoaded(resourceManager, this.fallbackProfileId);
         }
 
-        if (root.has("offhand_default") && !root.get("offhand_default").isJsonNull()) {
+        if (secondaryRoot != null && secondaryRoot.has("default") && !secondaryRoot.get("default").isJsonNull()) {
+            this.offhandFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(secondaryRoot, "default"));
+            this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
+        } else if (root.has("secondary_default") && !root.get("secondary_default").isJsonNull()) {
+            this.offhandFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "secondary_default"));
+            this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
+        } else if (root.has("offhand_default") && !root.get("offhand_default").isJsonNull()) {
             this.offhandFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "offhand_default"));
             this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
         }
 
-        if (root.has("both_hands_default") && !root.get("both_hands_default").isJsonNull()) {
+        if (bothRoot != null && bothRoot.has("default") && !bothRoot.get("default").isJsonNull()) {
+            this.bothHandsFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(bothRoot, "default"));
+            this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
+        } else if (root.has("both_default") && !root.get("both_default").isJsonNull()) {
+            this.bothHandsFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "both_default"));
+            this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
+        } else if (root.has("both_hands_default") && !root.get("both_hands_default").isJsonNull()) {
             this.bothHandsFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "both_hands_default"));
             this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
         }
@@ -668,26 +685,43 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.ensureProfileLoaded(resourceManager, this.emptyHandsProfileId);
         }
 
-        this.loadProfileRules(resourceManager, root, this.itemProfileRules, this.tagProfileRules);
+        this.loadProfileRules(resourceManager, primaryFallbackRoot, this.itemProfileRules, this.tagProfileRules);
         if (root.has("main_hand")) {
             this.loadProfileRules(resourceManager, GsonHelper.getAsJsonObject(root, "main_hand"), this.itemProfileRules, this.tagProfileRules);
+        }
+        if (secondaryRoot != null) {
+            this.loadProfileRules(resourceManager, secondaryRoot, this.offhandItemProfileRules, this.offhandTagProfileRules);
         }
         if (root.has("offhand")) {
             this.loadProfileRules(resourceManager, GsonHelper.getAsJsonObject(root, "offhand"), this.offhandItemProfileRules, this.offhandTagProfileRules);
         }
-        if (root.has("both_hands")) {
-            JsonArray bothHands = GsonHelper.getAsJsonArray(root, "both_hands");
+        JsonArray bothHands = null;
+        if (bothRoot != null && bothRoot.has("rules")) {
+            bothHands = GsonHelper.getAsJsonArray(bothRoot, "rules");
+        } else if (bothRoot != null && bothRoot.has("hands")) {
+            bothHands = GsonHelper.getAsJsonArray(bothRoot, "hands");
+        } else if (root.has("both_hands")) {
+            bothHands = GsonHelper.getAsJsonArray(root, "both_hands");
+        }
+        if (bothHands != null) {
             for (JsonElement element : bothHands) {
                 JsonObject ruleJson = element.getAsJsonObject();
                 ResourceLocation profileId = ResourceLocation.parse(GsonHelper.getAsString(ruleJson, "profile"));
                 this.bothHandsProfileRules.add(new BothHandsProfileRule(
-                        HandMatcher.read(GsonHelper.getAsJsonObject(ruleJson, "main")),
-                        HandMatcher.read(GsonHelper.getAsJsonObject(ruleJson, "offhand")),
+                        HandMatcher.read(readHandMatcher(ruleJson, "primary", "main")),
+                        HandMatcher.read(readHandMatcher(ruleJson, "secondary", "offhand")),
                         profileId
                 ));
                 this.ensureProfileLoaded(resourceManager, profileId);
             }
         }
+    }
+
+    private static JsonObject readHandMatcher(JsonObject root, String preferredKey, String legacyKey) {
+        if (root.has(preferredKey)) {
+            return GsonHelper.getAsJsonObject(root, preferredKey);
+        }
+        return GsonHelper.getAsJsonObject(root, legacyKey);
     }
 
     private void loadProfileRules(ResourceManager resourceManager, JsonObject root, Map<ResourceLocation, ResourceLocation> itemRules, List<TagProfileRule> tagRules) {
