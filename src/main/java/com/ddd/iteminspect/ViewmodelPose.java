@@ -194,7 +194,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public void startInspect(ItemStack mainHandStack, ItemStack offhandStack, boolean allowEmptyHands) {
-        if (this.state == State.PULLOUT || this.state == State.PUTAWAY || this.equipBlendWindowTick > 0) {
+        if (this.state == State.PULLOUT || this.state == State.PUTAWAY || this.equipBlendWindowTick > 0
+                || this.mainHandLayer.isPulloutActive() || this.offhandLayer.isPulloutActive()) {
             return;
         }
         this.mainHandLayer.cancel();
@@ -214,11 +215,17 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public void onMainHandChanged(ItemStack oldStack, ItemStack newStack, boolean oldAllowsEmptyHands, boolean newAllowsEmptyHands) {
+        if (this.isSharedPlaying()) {
+            this.mainHandLayer.primeRestartBlendFrom(this.captureControlledTransforms(HandLayerSide.MAIN));
+        }
         this.cancelAnimation();
         this.mainHandLayer.onHandChanged(oldStack, newStack, oldAllowsEmptyHands, newAllowsEmptyHands);
     }
 
     public void onOffhandChanged(ItemStack oldStack, ItemStack newStack) {
+        if (this.isSharedPlaying()) {
+            this.offhandLayer.primeRestartBlendFrom(this.captureControlledTransforms(HandLayerSide.OFFHAND));
+        }
         this.cancelAnimation();
         this.offhandLayer.onHandChanged(oldStack, newStack, false, false);
     }
@@ -618,6 +625,16 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             case VIEWMODEL_ARM_L -> this.viewmodelArmL;
             case LEFT_BLOCK_ROOT -> this.blockRoot.mirroredTransform();
         };
+    }
+
+    private EnumMap<Bone, Transform> captureControlledTransforms(HandLayerSide side) {
+        EnumMap<Bone, Transform> transforms = new EnumMap<>(Bone.class);
+        for (Bone bone : Bone.values()) {
+            if (side.controls(bone)) {
+                transforms.put(bone, this.currentTransform(bone, this.bindFallback(bone), 0.0F));
+            }
+        }
+        return transforms;
     }
 
     private static float smoothStep(float value) {
@@ -1127,6 +1144,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         private ItemStack visualStack = ItemStack.EMPTY;
         private ItemStack queuedPulloutStack = ItemStack.EMPTY;
         private boolean queuedPulloutAllowsEmptyHands;
+        private final EnumMap<Bone, Transform> restartBlendFrom = new EnumMap<>(Bone.class);
         private int animationTick;
         private int nextSoundEventIndex;
         private boolean skipNextAnimationTick;
@@ -1137,6 +1155,10 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
         private boolean isActive() {
             return this.state == State.PULLOUT || this.state == State.PUTAWAY;
+        }
+
+        private boolean isPulloutActive() {
+            return this.state == State.PULLOUT;
         }
 
         private boolean controls(Bone bone) {
@@ -1202,6 +1224,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 return false;
             }
 
+            if (targetState == State.PUTAWAY && this.isActive() && this.animation != nextAnimation && this.restartBlendFrom.isEmpty()) {
+                this.captureRestartBlendFrom();
+            }
             this.profile = nextProfile;
             this.animation = nextAnimation;
             this.currentClip = clip;
@@ -1225,6 +1250,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             }
 
             this.animationTick++;
+            if (this.animationTick >= RESTART_BLEND_TICKS) {
+                this.restartBlendFrom.clear();
+            }
             this.playPendingSoundEvents(this.animation.startFrame() + this.animationTick);
             if (this.animationTick < this.animation.length()) {
                 return;
@@ -1233,6 +1261,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             if (this.currentClip == Clip.PULLOUT) {
                 this.animationTick = 0;
                 this.skipNextAnimationTick = false;
+                this.restartBlendFrom.clear();
                 this.state = this.visualStack.isEmpty() ? State.IDLE : State.READY;
                 this.markEquipSuppressionWindow();
                 return;
@@ -1244,6 +1273,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 this.queuedPulloutStack = ItemStack.EMPTY;
                 this.queuedPulloutAllowsEmptyHands = false;
                 this.resetPlayback();
+                this.restartBlendFrom.clear();
                 if (ViewmodelPose.this.hasProfileFor(nextStack, nextAllowsEmptyHands)) {
                     this.startPullout(nextStack, nextAllowsEmptyHands);
                 }
@@ -1256,7 +1286,49 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             }
 
             Transform profileFallback = this.profile.bindFallback(bone);
-            return this.animation.sample(bone, this.animationTick + partialTick, profileFallback);
+            Transform transform = this.animation.sample(bone, this.animationTick + partialTick, profileFallback);
+            if (this.restartBlendFrom.isEmpty()) {
+                return transform;
+            }
+
+            float alpha = Math.min((this.animationTick + partialTick) / RESTART_BLEND_TICKS, 1.0F);
+            if (alpha >= 1.0F) {
+                return transform;
+            }
+
+            Transform from = this.restartBlendFrom.getOrDefault(bone, fallback);
+            return Transform.lerp(from, transform, smoothStep(alpha));
+        }
+
+        private void captureRestartBlendFrom() {
+            this.restartBlendFrom.clear();
+            this.restartBlendFrom.putAll(this.captureCurrentControlledTransforms());
+        }
+
+        private void primeRestartBlendFrom(EnumMap<Bone, Transform> transforms) {
+            this.restartBlendFrom.clear();
+            this.restartBlendFrom.putAll(transforms);
+        }
+
+        private EnumMap<Bone, Transform> captureCurrentControlledTransforms() {
+            EnumMap<Bone, Transform> transforms = new EnumMap<>(Bone.class);
+            for (Bone bone : Bone.values()) {
+                if (!this.controls(bone)) {
+                    continue;
+                }
+
+                transforms.put(bone, this.currentTransformWithoutRestartBlend(bone));
+            }
+            return transforms;
+        }
+
+        private Transform currentTransformWithoutRestartBlend(Bone bone) {
+            Transform fallback = this.profile == null ? ViewmodelPose.this.bindFallback(bone) : this.profile.bindFallback(bone);
+            if (!this.isActive() || this.animation.isEmpty() || this.profile == null) {
+                return fallback;
+            }
+
+            return this.animation.sample(bone, this.animationTick, fallback);
         }
 
         private void playPendingSoundEvents(int currentFrame) {
@@ -1281,12 +1353,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.animationTick = 0;
             this.nextSoundEventIndex = 0;
             this.skipNextAnimationTick = false;
+            this.restartBlendFrom.clear();
         }
 
         private void cancel() {
             this.resetPlayback();
             this.queuedPulloutStack = ItemStack.EMPTY;
             this.queuedPulloutAllowsEmptyHands = false;
+            this.restartBlendFrom.clear();
         }
 
         private void markEquipSuppressionWindow() {
@@ -1365,7 +1439,12 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
 
         public int length() {
-            return this.frames.size();
+            if (this.frames.isEmpty()) {
+                return 0;
+            }
+
+            int lastFrame = this.frames.get(this.frames.size() - 1).frame();
+            return Math.max(1, lastFrame - this.startFrame + 1);
         }
 
         public Transform sample(Bone bone, float framePosition, Transform fallback) {
@@ -1373,18 +1452,48 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 return fallback;
             }
 
-            float clampedFrame = this.loop ? positiveModulo(framePosition, this.frames.size()) : Math.min(framePosition, this.frames.size() - 1);
-            int fromIndex = (int)Math.floor(clampedFrame);
-            int toIndex = this.loop ? (fromIndex + 1) % this.frames.size() : Math.min(fromIndex + 1, this.frames.size() - 1);
-            float alpha = clampedFrame - fromIndex;
-            Transform from = this.frames.get(fromIndex).transformOrFallback(bone, fallback);
-            Transform to = this.frames.get(toIndex).transformOrFallback(bone, fallback);
+            float absoluteFrame = this.startFrame + framePosition;
+            if (this.loop) {
+                absoluteFrame = this.loopedFrame(absoluteFrame);
+            }
+
+            AnimationFrame first = this.frames.get(0);
+            if (absoluteFrame <= first.frame()) {
+                return first.transformOrFallback(bone, fallback);
+            }
+
+            AnimationFrame last = this.frames.get(this.frames.size() - 1);
+            if (absoluteFrame >= last.frame()) {
+                return last.transformOrFallback(bone, fallback);
+            }
+
+            AnimationFrame fromFrame = first;
+            AnimationFrame toFrame = last;
+            for (int index = 0; index < this.frames.size() - 1; index++) {
+                AnimationFrame current = this.frames.get(index);
+                AnimationFrame next = this.frames.get(index + 1);
+                if (absoluteFrame >= current.frame() && absoluteFrame <= next.frame()) {
+                    fromFrame = current;
+                    toFrame = next;
+                    break;
+                }
+            }
+
+            float frameSpan = Math.max(1.0F, toFrame.frame() - fromFrame.frame());
+            float alpha = (absoluteFrame - fromFrame.frame()) / frameSpan;
+            Transform from = fromFrame.transformOrFallback(bone, fallback);
+            Transform to = toFrame.transformOrFallback(bone, fallback);
             return Transform.lerp(from, to, alpha);
         }
 
-        private static float positiveModulo(float value, int modulo) {
-            float result = value % modulo;
-            return result < 0.0F ? result + modulo : result;
+        private float loopedFrame(float absoluteFrame) {
+            int lastFrame = this.frames.get(this.frames.size() - 1).frame();
+            float duration = Math.max(1.0F, lastFrame - this.startFrame + 1.0F);
+            float result = (absoluteFrame - this.startFrame) % duration;
+            if (result < 0.0F) {
+                result += duration;
+            }
+            return this.startFrame + result;
         }
     }
 

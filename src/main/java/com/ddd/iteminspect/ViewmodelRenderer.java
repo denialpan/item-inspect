@@ -94,27 +94,12 @@ public final class ViewmodelRenderer {
         try {
             EntityRenderer<?> renderer = minecraft.getEntityRenderDispatcher().getRenderer(minecraft.player);
             if (renderer instanceof PlayerRenderer playerRenderer) {
-                poseStack.pushPose();
-                if (leftMainHand) {
-                    pose.viewmodelArmL(event.getPartialTick()).mirroredTransform().apply(poseStack);
-                } else {
-                    pose.viewmodelArmR(event.getPartialTick()).apply(poseStack);
-                }
-                playerRenderer.renderRightHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
-                poseStack.popPose();
-
-                poseStack.pushPose();
-                if (leftMainHand) {
-                    pose.viewmodelArmR(event.getPartialTick()).mirroredTransform().apply(poseStack);
-                } else {
-                    pose.viewmodelArmL(event.getPartialTick()).apply(poseStack);
-                }
-                playerRenderer.renderLeftHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
-                poseStack.popPose();
+                renderArm(event, pose, playerRenderer, true, leftMainHand);
+                renderArm(event, pose, playerRenderer, false, leftMainHand);
             }
 
-            renderHeldItem(event, pose, stack, leftMainHand);
-            renderHeldItem(event, pose, offhandStack, !leftMainHand);
+            renderHeldItem(event, pose, stack, true, leftMainHand);
+            renderHeldItem(event, pose, offhandStack, false, leftMainHand);
         } finally {
             poseStack.popPose();
         }
@@ -129,49 +114,54 @@ public final class ViewmodelRenderer {
         try {
             EntityRenderer<?> renderer = minecraft.getEntityRenderDispatcher().getRenderer(minecraft.player);
             if (renderer instanceof PlayerRenderer playerRenderer) {
-                poseStack.pushPose();
-                if (mainLayer) {
-                    if (leftMainHand) {
-                        pose.viewmodelArmL(event.getPartialTick()).mirroredTransform().apply(poseStack);
-                    } else {
-                        pose.viewmodelArmR(event.getPartialTick()).apply(poseStack);
-                    }
-                    playerRenderer.renderRightHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
-                } else {
-                    if (leftMainHand) {
-                        pose.viewmodelArmR(event.getPartialTick()).mirroredTransform().apply(poseStack);
-                    } else {
-                        pose.viewmodelArmL(event.getPartialTick()).apply(poseStack);
-                    }
-                    playerRenderer.renderLeftHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), minecraft.player);
-                }
-                poseStack.popPose();
+                renderArm(event, pose, playerRenderer, mainLayer, leftMainHand);
             }
 
-            renderHeldItem(event, pose, stack, itemInLeftHand);
+            renderHeldItem(event, pose, stack, mainLayer, leftMainHand);
         } finally {
             poseStack.popPose();
         }
     }
 
-    private static void renderHeldItem(RenderHandEvent event, ViewmodelPose pose, ItemStack stack, boolean leftHand) {
+    private static void renderArm(RenderHandEvent event, ViewmodelPose pose, PlayerRenderer playerRenderer, boolean mainLayer, boolean leftMainHand) {
+        PoseStack poseStack = event.getPoseStack();
+        boolean leftHand = mainLayer == leftMainHand;
+        boolean mirrorLayer = mainLayer == leftHand;
+        poseStack.pushPose();
+        if (mainLayer) {
+            applyLayerTransform(pose.viewmodelArmR(event.getPartialTick()), poseStack, mirrorLayer);
+        } else {
+            applyLayerTransform(pose.viewmodelArmL(event.getPartialTick()), poseStack, mirrorLayer);
+        }
+
+        if (leftHand) {
+            playerRenderer.renderLeftHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), Minecraft.getInstance().player);
+        } else {
+            playerRenderer.renderRightHand(poseStack, event.getMultiBufferSource(), event.getPackedLight(), Minecraft.getInstance().player);
+        }
+        poseStack.popPose();
+    }
+
+    private static void renderHeldItem(RenderHandEvent event, ViewmodelPose pose, ItemStack stack, boolean mainLayer, boolean leftMainHand) {
         if (stack.isEmpty()) {
             return;
         }
 
         Minecraft minecraft = Minecraft.getInstance();
         PoseStack poseStack = event.getPoseStack();
+        boolean leftHand = mainLayer == leftMainHand;
+        boolean mirrorLayer = mainLayer == leftHand;
         poseStack.pushPose();
         if (stack.getItem() instanceof BlockItem) {
-            if (leftHand) {
-                pose.leftBlockRoot(event.getPartialTick()).apply(poseStack);
+            if (mainLayer) {
+                applyLayerTransform(pose.blockRoot(event.getPartialTick()), poseStack, mirrorLayer);
             } else {
-                pose.blockRoot(event.getPartialTick()).apply(poseStack);
+                applyLayerTransform(pose.leftBlockRoot(event.getPartialTick()), poseStack, mirrorLayer);
             }
-        } else if (leftHand) {
-            pose.leftItemRoot(event.getPartialTick()).apply(poseStack);
+        } else if (mainLayer) {
+            applyLayerTransform(pose.itemRoot(event.getPartialTick()), poseStack, mirrorLayer);
         } else {
-            pose.itemRoot(event.getPartialTick()).apply(poseStack);
+            applyLayerTransform(pose.leftItemRoot(event.getPartialTick()), poseStack, mirrorLayer);
         }
 
         minecraft.getItemRenderer().renderStatic(
@@ -187,5 +177,13 @@ public final class ViewmodelRenderer {
                 leftHand ? minecraft.player.getId() + 1 : minecraft.player.getId()
         );
         poseStack.popPose();
+    }
+
+    private static void applyLayerTransform(ViewmodelPose.Transform transform, PoseStack poseStack, boolean mirror) {
+        if (mirror) {
+            transform.mirroredTransform().apply(poseStack);
+        } else {
+            transform.apply(poseStack);
+        }
     }
 }
