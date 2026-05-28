@@ -95,7 +95,9 @@ public final class ViewmodelRenderer {
             EntityRenderer<?> renderer = minecraft.getEntityRenderDispatcher().getRenderer(minecraft.player);
             if (renderer instanceof PlayerRenderer playerRenderer) {
                 renderArm(event, pose, playerRenderer, true, leftMainHand);
-                renderArm(event, pose, playerRenderer, false, leftMainHand);
+                if (!offhandStack.isEmpty() || pose.shouldRenderEmptyOffhandArm()) {
+                    renderArm(event, pose, playerRenderer, false, leftMainHand);
+                }
             }
 
             renderHeldItem(event, pose, stack, true, leftMainHand);

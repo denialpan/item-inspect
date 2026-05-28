@@ -23,6 +23,7 @@
   },
   "both": {
     "default": "iteminspect:viewmodel/default/profile_both.json",
+    "empty": "iteminspect:viewmodel/empty/profile_both.json",
     "rules": [
       {
         "primary": {
@@ -34,5 +35,6 @@
         "profile": "iteminspect:viewmodel/swords/profile_both.json"
       }
     ]
-  }
+  },
+  "empty_hands": "iteminspect:viewmodel/empty/profile_primary.json"
 }

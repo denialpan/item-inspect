@@ -61,6 +61,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private ResourceLocation offhandFallbackProfileId;
     private ResourceLocation bothHandsFallbackProfileId;
     private ResourceLocation emptyHandsProfileId;
+    private ResourceLocation emptyBothHandsProfileId;
     private ResourceLocation activeProfileId;
     private boolean visualStackWasEmpty;
     private State state = State.IDLE;
@@ -152,6 +153,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     public boolean isSharedPlaying() {
         return this.playing && (this.state == State.PULLOUT || this.state == State.INSPECT || this.state == State.PUTAWAY);
+    }
+
+    public boolean shouldRenderEmptyOffhandArm() {
+        return this.isSharedPlaying() && this.currentClip == Clip.INSPECT && this.emptyBothHandsProfileId != null
+                && this.emptyBothHandsProfileId.equals(this.activeProfileId);
     }
 
     public boolean isMainHandLayerActive() {
@@ -452,6 +458,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     private boolean activateInspectProfile(ItemStack mainHandStack, ItemStack offhandStack, boolean allowEmptyHands) {
         ResourceLocation profileId = this.resolveBothHandsProfile(mainHandStack, offhandStack);
+        if (profileId == null && mainHandStack.isEmpty() && offhandStack.isEmpty()) {
+            profileId = this.emptyBothHandsProfileId;
+        }
         if (profileId == null) {
             profileId = mainHandStack.isEmpty()
                     ? this.resolveProfile(offhandStack, allowEmptyHands, HandLayerSide.OFFHAND)
@@ -713,6 +722,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
         }
 
+        if (bothRoot != null && bothRoot.has("empty") && !bothRoot.get("empty").isJsonNull()) {
+            this.emptyBothHandsProfileId = ResourceLocation.parse(GsonHelper.getAsString(bothRoot, "empty"));
+            this.ensureProfileLoaded(resourceManager, this.emptyBothHandsProfileId);
+        } else if (root.has("empty_both_hands") && !root.get("empty_both_hands").isJsonNull()) {
+            this.emptyBothHandsProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "empty_both_hands"));
+            this.ensureProfileLoaded(resourceManager, this.emptyBothHandsProfileId);
+        }
+
         if (root.has("empty_hands") && !root.get("empty_hands").isJsonNull()) {
             this.emptyHandsProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "empty_hands"));
             this.ensureProfileLoaded(resourceManager, this.emptyHandsProfileId);
@@ -883,6 +900,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.offhandFallbackProfileId = null;
             this.bothHandsFallbackProfileId = null;
             this.emptyHandsProfileId = null;
+            this.emptyBothHandsProfileId = null;
             this.activeProfileId = null;
             this.visualStackWasEmpty = false;
             this.state = State.IDLE;

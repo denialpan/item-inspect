@@ -33,6 +33,7 @@ public class iteminspectClient {
     private static ItemStack lastSelectedStack = ItemStack.EMPTY;
     private static boolean lastBothHandsEmpty;
     private static ItemStack queuedExternalHandoffStack = ItemStack.EMPTY;
+    private static boolean queuedExternalHandoffHasMainHand;
     private static ItemStack queuedExternalHandoffOffhandStack = ItemStack.EMPTY;
     private static boolean queuedExternalHandoffAllowsEmptyHands;
     private static int externalHandoffTicks;
@@ -102,7 +103,7 @@ public class iteminspectClient {
                     ViewmodelPose.INSTANCE.cancelAllAnimations();
                     clearExternalHandoff();
                 } else if (externalHandoffTicks > 0 && !selectedExternal) {
-                    updateQueuedExternalHandoffMainHand(selectedStack, bothHandsEmpty);
+                    updateQueuedExternalHandoffMainHand(selectedStack, allowsEmptyMainHand(selectedStack));
                 } else {
                     handleMainHandChanged(lastSelectedStack, selectedStack, offhandStack, lastBothHandsEmpty, bothHandsEmpty);
                 }
@@ -125,7 +126,7 @@ public class iteminspectClient {
             lastSelectedStack = selectedStack.copy();
             lastOffhandStack = offhandStack.copy();
             lastBothHandsEmpty = bothHandsEmpty;
-            tickExternalHandoff(selectedStack, offhandStack, bothHandsEmpty);
+            tickExternalHandoff(selectedStack, offhandStack);
             if (minecraft.options.keyAttack.isDown()) {
                 ViewmodelPose.INSTANCE.cancelAnimation();
             }
@@ -169,12 +170,12 @@ public class iteminspectClient {
 
         if (oldExternal) {
             ViewmodelPose.INSTANCE.cancelAllAnimations();
-            queueExternalHandoff(newStack, offhandStack, newBothHandsEmpty, externalHandoffTicksFor(oldStack));
+            queueExternalHandoff(newStack, offhandStack, allowsEmptyMainHand(newStack), externalHandoffTicksFor(oldStack));
             return;
         }
 
         clearExternalHandoff();
-        ViewmodelPose.INSTANCE.onHotbarChanged(oldStack, newStack, oldBothHandsEmpty, newBothHandsEmpty);
+        ViewmodelPose.INSTANCE.onHotbarChanged(oldStack, newStack, allowsEmptyMainHand(oldStack), allowsEmptyMainHand(newStack));
     }
 
     private static void handleOffhandChanged(ItemStack oldStack, ItemStack newStack) {
@@ -193,6 +194,10 @@ public class iteminspectClient {
         }
 
         return ItemStack.isSameItemSameComponents(oldStack, newStack);
+    }
+
+    private static boolean allowsEmptyMainHand(ItemStack stack) {
+        return stack.isEmpty();
     }
 
     private static void queueExternalHandoff(ItemStack stack, ItemStack offhandStack, boolean allowEmptyHands, int handoffTicks) {
@@ -215,13 +220,16 @@ public class iteminspectClient {
         }
 
         queuedExternalHandoffStack = queueMainHand ? stack.copy() : ItemStack.EMPTY;
+        queuedExternalHandoffHasMainHand = queueMainHand;
         queuedExternalHandoffOffhandStack = queueOffhand ? offhandStack.copy() : ItemStack.EMPTY;
         queuedExternalHandoffAllowsEmptyHands = allowEmptyHands;
         externalHandoffTicks = handoffTicks;
     }
 
     private static void updateQueuedExternalHandoffMainHand(ItemStack stack, boolean allowEmptyHands) {
-        queuedExternalHandoffStack = ViewmodelPose.INSTANCE.hasProfileFor(stack, allowEmptyHands) ? stack.copy() : ItemStack.EMPTY;
+        boolean queueMainHand = ViewmodelPose.INSTANCE.hasProfileFor(stack, allowEmptyHands);
+        queuedExternalHandoffStack = queueMainHand ? stack.copy() : ItemStack.EMPTY;
+        queuedExternalHandoffHasMainHand = queueMainHand;
         queuedExternalHandoffAllowsEmptyHands = allowEmptyHands;
     }
 
@@ -262,28 +270,29 @@ public class iteminspectClient {
         }
     }
 
-    private static void tickExternalHandoff(ItemStack selectedStack, ItemStack offhandStack, boolean bothHandsEmpty) {
+    private static void tickExternalHandoff(ItemStack selectedStack, ItemStack offhandStack) {
         if (externalHandoffTicks <= 0) {
             return;
         }
 
-        boolean mainHandMismatch = !queuedExternalHandoffStack.isEmpty() && !ItemStack.matches(queuedExternalHandoffStack, selectedStack);
+        boolean mainHandMismatch = queuedExternalHandoffHasMainHand && !ItemStack.matches(queuedExternalHandoffStack, selectedStack);
         boolean offhandMismatch = !queuedExternalHandoffOffhandStack.isEmpty() && !ItemStack.matches(queuedExternalHandoffOffhandStack, offhandStack);
         if (isExternalItem(selectedStack) || mainHandMismatch || offhandMismatch
-                || (!queuedExternalHandoffStack.isEmpty() && queuedExternalHandoffAllowsEmptyHands != bothHandsEmpty)) {
+                || (queuedExternalHandoffHasMainHand && queuedExternalHandoffAllowsEmptyHands != allowsEmptyMainHand(selectedStack))) {
             clearExternalHandoff();
             return;
         }
 
         externalHandoffTicks--;
         if (externalHandoffTicks == 0) {
-            if (!queuedExternalHandoffStack.isEmpty()) {
-                ViewmodelPose.INSTANCE.startMainHandPullout(selectedStack, bothHandsEmpty);
+            if (queuedExternalHandoffHasMainHand) {
+                ViewmodelPose.INSTANCE.startMainHandPullout(selectedStack, queuedExternalHandoffAllowsEmptyHands);
             }
             if (!queuedExternalHandoffOffhandStack.isEmpty()) {
                 ViewmodelPose.INSTANCE.startOffhandPullout(queuedExternalHandoffOffhandStack);
             }
             queuedExternalHandoffStack = ItemStack.EMPTY;
+            queuedExternalHandoffHasMainHand = false;
             queuedExternalHandoffOffhandStack = ItemStack.EMPTY;
             queuedExternalHandoffAllowsEmptyHands = false;
         }
@@ -291,6 +300,7 @@ public class iteminspectClient {
 
     private static void clearExternalHandoff() {
         queuedExternalHandoffStack = ItemStack.EMPTY;
+        queuedExternalHandoffHasMainHand = false;
         queuedExternalHandoffOffhandStack = ItemStack.EMPTY;
         queuedExternalHandoffAllowsEmptyHands = false;
         externalHandoffTicks = 0;
