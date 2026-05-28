@@ -38,13 +38,10 @@ per-model first-person display transforms at runtime.
 from __future__ import annotations
 
 from math import radians
-from pathlib import Path
-
 import bpy
 from mathutils import Matrix, Vector
 
 
-OUT_PATH = Path(__file__).with_name("minecraft_1_21_1_empty_hand_viewmodel.blend")
 PIXEL = 1.0 / 16.0
 BLENDER_AUTHORING_MATRIX = Matrix.Rotation(radians(90.0), 4, "X")
 STICK_PROXY_ORIGIN_PX = (8.0, 8.0, 8.0)
@@ -207,6 +204,21 @@ def add_export_empty(name: str, minecraft_transform: Matrix, display_size: float
     return obj
 
 
+def add_child_of_with_inverse(
+    armature: bpy.types.Object,
+    child_bone_name: str,
+    parent_bone_name: str,
+) -> bpy.types.Constraint:
+    child_bone = armature.pose.bones[child_bone_name]
+    parent_bone = armature.pose.bones[parent_bone_name]
+    constraint = child_bone.constraints.new(type="CHILD_OF")
+    constraint.name = f"Child Of {parent_bone_name}"
+    constraint.target = armature
+    constraint.subtarget = parent_bone_name
+    constraint.inverse_matrix = parent_bone.matrix.inverted() @ child_bone.matrix
+    return constraint
+
+
 def create_viewmodel_armature(item_transform: Matrix, offhand_item_transform: Matrix, right_arm_transform: Matrix, left_arm_transform: Matrix) -> bpy.types.Object:
     armature_data = bpy.data.armatures.new("viewmodel_armature")
     armature_data.display_type = "STICK"
@@ -259,17 +271,8 @@ def create_viewmodel_armature(item_transform: Matrix, offhand_item_transform: Ma
     item_offhand_root.use_connect = False
 
     bpy.ops.object.mode_set(mode="OBJECT")
-    constraint = armature.pose.bones["viewmodel_arm_R"].constraints.new(type="CHILD_OF")
-    constraint.name = "Child Of item_root"
-    constraint.target = armature
-    constraint.subtarget = "item_root"
-    constraint.inverse_matrix = armature.pose.bones["item_root"].matrix.inverted() @ armature.pose.bones["viewmodel_arm_R"].matrix
-
-    constraint = armature.pose.bones["viewmodel_arm_L"].constraints.new(type="CHILD_OF")
-    constraint.name = "Child Of item_offhand_root"
-    constraint.target = armature
-    constraint.subtarget = "item_offhand_root"
-    constraint.inverse_matrix = armature.pose.bones["item_offhand_root"].matrix.inverted() @ armature.pose.bones["viewmodel_arm_L"].matrix
+    add_child_of_with_inverse(armature, "viewmodel_arm_R", "item_root")
+    add_child_of_with_inverse(armature, "viewmodel_arm_L", "item_offhand_root")
     armature.show_in_front = True
     return armature
 
@@ -455,6 +458,18 @@ def create_scene() -> None:
     block_baked_origin = add_empty("held_block_baked_model_origin_after_minus_0_5", block_baked_matrix, 0.12)
     block_proxy = add_box("minecraft_block_proxy", (0.0, 0.0, 0.0), (16.0, 16.0, 16.0), block_baked_matrix, block)
 
+    offhand_block_preview_matrix = offhand_item_anchor_matrix.copy()
+    offhand_block_preview_matrix @= mat_translate(0.0, 0.0, 0.0)
+    offhand_block_preview_matrix @= mat_rot_x(0.0)
+    offhand_block_preview_matrix @= mat_rot_y(-45.0)
+    offhand_block_preview_matrix @= mat_rot_z(0.0)
+    offhand_block_preview_matrix @= mat_scale(0.40, 0.40, 0.40)
+    offhand_block_preview_anchor = add_empty("preview_block_firstperson_lefthand_display", offhand_block_preview_matrix, 0.12)
+
+    offhand_block_baked_matrix = offhand_block_preview_matrix @ mat_translate(-0.5, -0.5, -0.5)
+    offhand_block_baked_origin = add_empty("held_offhand_block_baked_model_origin_after_minus_0_5", offhand_block_baked_matrix, 0.12)
+    offhand_block_proxy = add_box("minecraft_offhand_block_proxy", (0.0, 0.0, 0.0), (16.0, 16.0, 16.0), offhand_block_baked_matrix, block)
+
     camera_data = bpy.data.cameras.new("Minecraft first-person camera")
     camera_data.type = "PERSP"
     camera_data.angle = radians(70.0)
@@ -472,6 +487,7 @@ def create_scene() -> None:
     bind_mesh_to_bone(stick_proxy, viewmodel_armature, "item_root")
     bind_mesh_to_bone(offhand_stick_proxy, viewmodel_armature, "item_offhand_root")
     bind_mesh_to_bone(block_proxy, viewmodel_armature, "item_root")
+    bind_mesh_to_bone(offhand_block_proxy, viewmodel_armature, "item_offhand_root")
     bind_mesh_to_bone(right_arm_base, viewmodel_armature, "viewmodel_arm_R")
     bind_mesh_to_bone(right_sleeve, viewmodel_armature, "viewmodel_arm_R")
     bind_mesh_to_bone(left_arm_base, viewmodel_armature, "viewmodel_arm_L")
@@ -485,6 +501,8 @@ def create_scene() -> None:
     parent_object_to_bone_preserve_world(block_anchor, viewmodel_armature, "item_root")
     parent_object_to_bone_preserve_world(block_preview_anchor, viewmodel_armature, "item_root")
     parent_object_to_bone_preserve_world(block_baked_origin, viewmodel_armature, "item_root")
+    parent_object_to_bone_preserve_world(offhand_block_preview_anchor, viewmodel_armature, "item_offhand_root")
+    parent_object_to_bone_preserve_world(offhand_block_baked_origin, viewmodel_armature, "item_offhand_root")
     parent_object_to_bone_preserve_world(arm_anchor, viewmodel_armature, "viewmodel_arm_R")
     parent_object_to_bone_preserve_world(left_arm_anchor, viewmodel_armature, "viewmodel_arm_L")
 
@@ -496,6 +514,7 @@ def create_scene() -> None:
 
     bpy.context.scene.render.resolution_x = 1920
     bpy.context.scene.render.resolution_y = 1080
+    bpy.context.scene.render.fps = 20
     bpy.context.scene.unit_settings.system = "METRIC"
 
     note = bpy.data.texts.new("SOURCE_NOTES")
@@ -509,11 +528,9 @@ def create_scene() -> None:
         "The armature hierarchy is camera -> viewmodel_camera, camera -> item_root, camera -> item_offhand_root, camera -> viewmodel_arm_R, and camera -> viewmodel_arm_L. "
         "viewmodel_camera is a visual camera offset control for export; the real Blender camera is parented to it for authoring preview. "
         "viewmodel_arm_R is constrained Child Of item_root; viewmodel_arm_L is constrained Child Of item_offhand_root. "
-        "Main-hand item/block proxy meshes are weighted to item_root; offhand item proxy meshes are weighted to item_offhand_root; arm and sleeve meshes are weighted to their matching viewmodel arm bones. "
+        "Main-hand item/block proxy meshes are weighted to item_root; offhand item/block proxy meshes are weighted to item_offhand_root; arm and sleeve meshes are weighted to their matching viewmodel arm bones. "
         "No custom mod renderer exists in src/main/java, so this is vanilla 1.21.1 behavior."
     )
-
-    bpy.ops.wm.save_as_mainfile(filepath=str(OUT_PATH))
 
 
 if __name__ == "__main__":
