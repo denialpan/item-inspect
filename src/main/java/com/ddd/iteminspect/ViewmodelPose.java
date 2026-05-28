@@ -174,6 +174,10 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return !stack.isEmpty() && this.resolveSpecificProfile(stack) != null;
     }
 
+    private boolean hasSettledVisualStack() {
+        return !this.visualStack.isEmpty() || this.visualStackWasEmpty;
+    }
+
     public ItemStack visualStackOr(ItemStack fallback) {
         if (this.mainHandLayer.isActive()) {
             return this.mainHandLayer.visualStackOr(fallback);
@@ -230,6 +234,18 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.offhandLayer.onHandChanged(oldStack, newStack, false, false);
     }
 
+    public void rememberSettledOffhand(ItemStack stack) {
+        this.offhandLayer.rememberSettledStack(stack, false);
+    }
+
+    public void startMainHandPullout(ItemStack stack, boolean allowEmptyHands) {
+        this.mainHandLayer.startPullout(stack, allowEmptyHands);
+    }
+
+    public void startOffhandPullout(ItemStack stack) {
+        this.offhandLayer.startPullout(stack, false);
+    }
+
     private void onSharedHandChanged(ItemStack oldStack, ItemStack newStack, boolean oldAllowsEmptyHands, boolean newAllowsEmptyHands) {
         this.queuedPulloutStack = newStack.copy();
         this.queuedPulloutAllowsEmptyHands = newAllowsEmptyHands;
@@ -253,7 +269,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
         ItemStack putawayStack = this.visualStackOr(oldStack).copy();
         boolean canPutAway = this.hasProfileFor(putawayStack, this.visualStackWasEmpty || oldAllowsEmptyHands);
-        if (canPutAway && (this.state == State.READY || this.state == State.INSPECT || oldAllowsEmptyHands)) {
+        if (canPutAway && (this.hasSettledVisualStack() || this.state == State.INSPECT || oldAllowsEmptyHands)) {
             if (this.startPutaway(putawayStack, this.visualStackWasEmpty || oldAllowsEmptyHands)) {
                 return;
             }
@@ -289,7 +305,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         if (!this.playClip(Clip.PULLOUT, stack, State.PULLOUT)) {
             this.visualStack = stack.copy();
             this.visualStackWasEmpty = stack.isEmpty();
-            this.state = State.READY;
+            this.state = State.IDLE;
         }
     }
 
@@ -353,7 +369,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.nextSoundEventIndex = 0;
         this.skipNextAnimationTick = false;
         this.playing = false;
-        this.state = this.visualStack.isEmpty() && !this.visualStackWasEmpty ? State.IDLE : State.READY;
+        this.state = State.IDLE;
         this.restartBlendFrom.clear();
     }
 
@@ -547,7 +563,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.animationTick = 0;
             this.skipNextAnimationTick = false;
             this.restartBlendFrom.clear();
-            this.state = this.visualStack.isEmpty() && !this.visualStackWasEmpty ? State.IDLE : State.READY;
+            this.state = State.IDLE;
             return;
         }
 
@@ -1046,7 +1062,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private enum State {
         IDLE,
         PULLOUT,
-        READY,
         INSPECT,
         PUTAWAY
     }
@@ -1169,6 +1184,28 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             return this.visualStack.isEmpty() ? fallback : this.visualStack;
         }
 
+        private boolean hasSettledVisualStack() {
+            return !this.visualStack.isEmpty();
+        }
+
+        private void rememberSettledStack(ItemStack stack, boolean allowEmptyHands) {
+            if (!ViewmodelPose.this.hasProfileFor(stack, allowEmptyHands)) {
+                return;
+            }
+
+            this.profile = null;
+            this.animation = Animation.empty();
+            this.currentClip = Clip.PULLOUT;
+            this.state = State.IDLE;
+            this.visualStack = stack.copy();
+            this.queuedPulloutStack = ItemStack.EMPTY;
+            this.queuedPulloutAllowsEmptyHands = false;
+            this.animationTick = 0;
+            this.nextSoundEventIndex = 0;
+            this.skipNextAnimationTick = false;
+            this.restartBlendFrom.clear();
+        }
+
         private void onHandChanged(ItemStack oldStack, ItemStack newStack, boolean oldAllowsEmptyHands, boolean newAllowsEmptyHands) {
             this.queuedPulloutStack = newStack.copy();
             this.queuedPulloutAllowsEmptyHands = newAllowsEmptyHands;
@@ -1186,7 +1223,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             }
 
             ItemStack putawayStack = this.visualStackOr(oldStack).copy();
-            if (ViewmodelPose.this.hasProfileFor(putawayStack, oldAllowsEmptyHands) && (this.state == State.READY || oldAllowsEmptyHands)) {
+            if (ViewmodelPose.this.hasProfileFor(putawayStack, oldAllowsEmptyHands) && (this.hasSettledVisualStack() || oldAllowsEmptyHands)) {
                 if (this.startPutaway(putawayStack, oldAllowsEmptyHands)) {
                     return;
                 }
@@ -1203,7 +1240,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         private void startPullout(ItemStack stack, boolean allowEmptyHands) {
             if (!this.playClip(Clip.PULLOUT, stack, allowEmptyHands, State.PULLOUT)) {
                 this.visualStack = stack.copy();
-                this.state = stack.isEmpty() ? State.IDLE : State.READY;
+                this.state = State.IDLE;
             }
         }
 
@@ -1262,7 +1299,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 this.animationTick = 0;
                 this.skipNextAnimationTick = false;
                 this.restartBlendFrom.clear();
-                this.state = this.visualStack.isEmpty() ? State.IDLE : State.READY;
+                this.state = State.IDLE;
                 this.markEquipSuppressionWindow();
                 return;
             }
