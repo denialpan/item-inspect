@@ -47,6 +47,10 @@ from mathutils import Matrix, Vector
 OUT_PATH = Path(__file__).with_name("minecraft_1_21_1_empty_hand_viewmodel.blend")
 PIXEL = 1.0 / 16.0
 BLENDER_AUTHORING_MATRIX = Matrix.Rotation(radians(90.0), 4, "X")
+STICK_PROXY_ORIGIN_PX = (8.0, 8.0, 8.0)
+STICK_GRIP_PIVOT_PX = (8.0, 4.5, 8.0)
+STICK_PROXY_ROTATION_DEGREES = -45.0
+OFFHAND_STICK_PROXY_ROTATION_DEGREES = 45.0
 
 
 def clear_scene() -> None:
@@ -76,6 +80,32 @@ def mat_scale(x: float, y: float, z: float) -> Matrix:
     matrix[1][1] = y
     matrix[2][2] = z
     return matrix
+
+
+def matrix_with_translation(matrix: Matrix, translation: Vector) -> Matrix:
+    result = matrix.copy()
+    result.translation = translation
+    return result
+
+
+def model_space_delta(from_px: tuple[float, float, float], to_px: tuple[float, float, float]) -> Vector:
+    fx, fy, fz = from_px
+    tx, ty, tz = to_px
+    return Vector(((tx - fx) * PIXEL, (ty - fy) * PIXEL, (tz - fz) * PIXEL))
+
+
+def stick_object_matrix(baked_matrix: Matrix, rotation_degrees: float = STICK_PROXY_ROTATION_DEGREES) -> Matrix:
+    ox, oy, oz = STICK_PROXY_ORIGIN_PX
+    matrix = baked_matrix.copy()
+    matrix @= mat_translate(ox * PIXEL, oy * PIXEL, oz * PIXEL)
+    matrix @= mat_rot_z(rotation_degrees)
+    return matrix
+
+
+def bone_matrix_from_stick(stick_obj: bpy.types.Object) -> Matrix:
+    grip_offset = model_space_delta(STICK_PROXY_ORIGIN_PX, STICK_GRIP_PIVOT_PX)
+    grip_world = (stick_obj.matrix_world @ Vector((grip_offset.x, grip_offset.y, grip_offset.z, 1.0))).to_3d()
+    return matrix_with_translation(stick_obj.matrix_world, grip_world)
 
 
 def make_material(name: str, color: tuple[float, float, float, float]) -> bpy.types.Material:
@@ -117,6 +147,46 @@ def add_box(
     mesh.update()
     obj = bpy.data.objects.new(name, mesh)
     obj.data.materials.append(material)
+    bpy.context.collection.objects.link(obj)
+    return obj
+
+
+def add_box_with_model_origin(
+    name: str,
+    origin_px: tuple[float, float, float],
+    size_px: tuple[float, float, float],
+    object_origin_px: tuple[float, float, float],
+    transform: Matrix,
+    material: bpy.types.Material,
+) -> bpy.types.Object:
+    ox, oy, oz = origin_px
+    sx, sy, sz = size_px
+    px, py, pz = object_origin_px
+    corners = [
+        (ox, oy, oz),
+        (ox + sx, oy, oz),
+        (ox + sx, oy + sy, oz),
+        (ox, oy + sy, oz),
+        (ox, oy, oz + sz),
+        (ox + sx, oy, oz + sz),
+        (ox + sx, oy + sy, oz + sz),
+        (ox, oy + sy, oz + sz),
+    ]
+    verts = [((x - px) * PIXEL, (y - py) * PIXEL, (z - pz) * PIXEL) for x, y, z in corners]
+    faces = [
+        (0, 1, 2, 3),
+        (5, 4, 7, 6),
+        (4, 0, 3, 7),
+        (1, 5, 6, 2),
+        (3, 2, 6, 7),
+        (4, 5, 1, 0),
+    ]
+    mesh = bpy.data.meshes.new(f"{name}Mesh")
+    mesh.from_pydata(verts, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new(name, mesh)
+    obj.data.materials.append(material)
+    obj.matrix_world = transform
     bpy.context.collection.objects.link(obj)
     return obj
 
@@ -338,7 +408,15 @@ def create_scene() -> None:
     item_baked_origin = add_empty("held_item_baked_model_origin_after_minus_0_5", baked_item_matrix, 0.12)
 
     # Simple preview stick proxy in generated-item pixel space. This is not an export anchor.
-    stick_proxy = add_box("minecraft_stick_proxy", (7.0, 1.0, 7.5), (2.0, 14.0, 1.0), baked_item_matrix, stick)
+    stick_proxy = add_box_with_model_origin(
+        "minecraft_stick_proxy",
+        (7.0, 1.0, 7.5),
+        (2.0, 14.0, 1.0),
+        STICK_PROXY_ORIGIN_PX,
+        stick_object_matrix(baked_item_matrix),
+        stick,
+    )
+    item_bone_matrix = bone_matrix_from_stick(stick_proxy)
 
     offhand_item_preview_matrix = offhand_item_anchor_matrix.copy()
     offhand_item_preview_matrix @= mat_translate(-1.13 * PIXEL, 3.2 * PIXEL, 1.13 * PIXEL)
@@ -350,7 +428,15 @@ def create_scene() -> None:
 
     offhand_baked_item_matrix = offhand_item_preview_matrix @ mat_translate(-0.5, -0.5, -0.5)
     offhand_item_baked_origin = add_empty("held_offhand_item_baked_model_origin_after_minus_0_5", offhand_baked_item_matrix, 0.12)
-    offhand_stick_proxy = add_box("minecraft_offhand_stick_proxy", (7.0, 1.0, 7.5), (2.0, 14.0, 1.0), offhand_baked_item_matrix, stick)
+    offhand_stick_proxy = add_box_with_model_origin(
+        "minecraft_offhand_stick_proxy",
+        (7.0, 1.0, 7.5),
+        (2.0, 14.0, 1.0),
+        STICK_PROXY_ORIGIN_PX,
+        stick_object_matrix(offhand_baked_item_matrix, OFFHAND_STICK_PROXY_ROTATION_DEGREES),
+        stick,
+    )
+    offhand_item_bone_matrix = bone_matrix_from_stick(offhand_stick_proxy)
 
     # Neutral block item animation anchor. The block display transform below is preview-only.
     add_export_empty("held_block_transform_anchor_firstperson_righthand", item_hand_matrix)
@@ -381,7 +467,7 @@ def create_scene() -> None:
     bpy.context.scene.camera = camera
     add_wire_frustum(camera, 70.0, 16.0 / 9.0, 2.0)
 
-    viewmodel_armature = create_viewmodel_armature(item_anchor_matrix, offhand_item_anchor_matrix, arm_matrix, left_arm_matrix)
+    viewmodel_armature = create_viewmodel_armature(item_bone_matrix, offhand_item_bone_matrix, arm_matrix, left_arm_matrix)
     parent_object_to_bone_preserve_world(camera, viewmodel_armature, "viewmodel_camera")
     bind_mesh_to_bone(stick_proxy, viewmodel_armature, "item_root")
     bind_mesh_to_bone(offhand_stick_proxy, viewmodel_armature, "item_offhand_root")
