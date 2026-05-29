@@ -1,4 +1,14 @@
 {
+  "arm_movement/arm_move_1": {
+    "sounds": [
+      "iteminspect:arm_movement/arm_move_1"
+    ]
+  },
+  "arm_movement/arm_move_2": {
+    "sounds": [
+      "iteminspect:arm_movement/arm_move_2"
+    ]
+  },
   "swords/sword_pullout": {
     "sounds": [
       "iteminspect:swords/sword_pullout"

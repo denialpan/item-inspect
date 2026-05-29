@@ -5769,6 +5769,20 @@
             }
           }
         }
+      ],
+      "events": [
+        {
+          "frame": 2,
+          "type": "sound",
+          "sound": "iteminspect:arm_movement/arm_move_1",
+          "volume": 1.0
+        },
+        {
+          "frame": 30,
+          "type": "sound",
+          "sound": "iteminspect:arm_movement/arm_move_2",
+          "volume": 1.0
+        }
       ]
     }
   }
