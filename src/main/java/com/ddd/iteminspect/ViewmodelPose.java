@@ -204,16 +204,20 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public void startInspect(ItemStack mainHandStack, ItemStack offhandStack, boolean allowEmptyHands) {
-        if (this.state == State.PULLOUT || this.state == State.PUTAWAY || this.equipBlendWindowTick > 0
-                || this.mainHandLayer.isPulloutActive() || this.offhandLayer.isPulloutActive()) {
+        if (this.state == State.PUTAWAY || this.equipBlendWindowTick > 0) {
             return;
         }
+        EnumMap<Bone, Transform> restartBlend = this.isPlaying() ? this.captureCurrentTransforms() : new EnumMap<>(Bone.class);
         this.mainHandLayer.cancel();
         this.offhandLayer.cancel();
         if (!this.activateInspectProfile(mainHandStack, offhandStack, allowEmptyHands)) {
             return;
         }
-        this.playClip(Clip.INSPECT, mainHandStack.isEmpty() ? offhandStack : mainHandStack, State.INSPECT);
+        if (this.playClip(Clip.INSPECT, mainHandStack.isEmpty() ? offhandStack : mainHandStack, State.INSPECT)
+                && !restartBlend.isEmpty()) {
+            this.restartBlendFrom.clear();
+            this.restartBlendFrom.putAll(restartBlend);
+        }
     }
 
     public void onHotbarChanged(ItemStack oldStack, ItemStack newStack) {
@@ -227,6 +231,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     public void onMainHandChanged(ItemStack oldStack, ItemStack newStack, boolean oldAllowsEmptyHands, boolean newAllowsEmptyHands) {
         if (this.isSharedPlaying()) {
             this.mainHandLayer.primeRestartBlendFrom(this.captureControlledTransforms(HandLayerSide.MAIN));
+            this.mainHandLayer.primeVisualStack(this.visualStackOr(oldStack));
+            oldAllowsEmptyHands = oldAllowsEmptyHands || this.visualStackWasEmpty;
         }
         this.cancelAnimation();
         this.mainHandLayer.onHandChanged(oldStack, newStack, oldAllowsEmptyHands, newAllowsEmptyHands);
@@ -235,6 +241,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     public void onOffhandChanged(ItemStack oldStack, ItemStack newStack) {
         if (this.isSharedPlaying()) {
             this.offhandLayer.primeRestartBlendFrom(this.captureControlledTransforms(HandLayerSide.OFFHAND));
+            this.offhandLayer.primeVisualStack(this.visualOffhandStackOr(oldStack));
         }
         this.cancelAnimation();
         this.offhandLayer.onHandChanged(oldStack, newStack, false, false);
@@ -327,7 +334,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         Animation nextAnimation = this.animations.getOrDefault(clip, Animation.empty());
         if (!nextAnimation.isEmpty()) {
             this.restartBlendFrom.clear();
-            if (this.isCameraActive()) {
+            if (this.isPlaying()) {
                 for (Bone bone : Bone.values()) {
                     this.restartBlendFrom.put(bone, this.currentTransform(bone, this.bindFallback(bone), 0.0F));
                 }
@@ -658,6 +665,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             if (side.controls(bone)) {
                 transforms.put(bone, this.currentTransform(bone, this.bindFallback(bone), 0.0F));
             }
+        }
+        return transforms;
+    }
+
+    private EnumMap<Bone, Transform> captureCurrentTransforms() {
+        EnumMap<Bone, Transform> transforms = new EnumMap<>(Bone.class);
+        for (Bone bone : Bone.values()) {
+            transforms.put(bone, this.currentTransform(bone, this.bindFallback(bone), 0.0F));
         }
         return transforms;
     }
@@ -1301,7 +1316,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 return false;
             }
 
-            if (targetState == State.PUTAWAY && this.isActive() && this.animation != nextAnimation && this.restartBlendFrom.isEmpty()) {
+            if (this.isActive() && this.restartBlendFrom.isEmpty()) {
                 this.captureRestartBlendFrom();
             }
             this.profile = nextProfile;
@@ -1385,6 +1400,10 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         private void primeRestartBlendFrom(EnumMap<Bone, Transform> transforms) {
             this.restartBlendFrom.clear();
             this.restartBlendFrom.putAll(transforms);
+        }
+
+        private void primeVisualStack(ItemStack stack) {
+            this.visualStack = stack.copy();
         }
 
         private EnumMap<Bone, Transform> captureCurrentControlledTransforms() {
