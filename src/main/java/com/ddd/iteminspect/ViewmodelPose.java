@@ -333,7 +333,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 }
             } else if (this.equipBlendWindowTick > 0) {
                 for (Bone bone : Bone.values()) {
-                    this.restartBlendFrom.put(bone, this.bindFallback(bone));
+                    this.restartBlendFrom.put(bone, nextAnimation.firstFrameTransform(bone, this.bindFallback(bone)));
                 }
             }
             this.cancelBlendFrom.clear();
@@ -816,6 +816,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         profileAnimations.put(Clip.INSPECT, Animation.read(inspectRoot, bindPose.viewmodelCamera(), bindPose.itemRoot(), bindPose.itemOffhandRoot(), bindPose.blockRoot(), bindPose.viewmodelArmR(), bindPose.viewmodelArmL()));
         this.loadProfileClip(resourceManager, profileAnimations, bindPose, clips, Clip.PULLOUT);
         this.loadProfileClip(resourceManager, profileAnimations, bindPose, clips, Clip.PUTAWAY);
+        ProfileBindPose effectiveBindPose = bindPose.withFirstFrameFallbacks(profileAnimations);
 
         LOGGER.info("Loaded viewmodel profile {}: inspect={} pullout={} putaway={}",
                 profileId,
@@ -823,12 +824,12 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 profileAnimations.getOrDefault(Clip.PULLOUT, Animation.empty()).length(),
                 profileAnimations.getOrDefault(Clip.PUTAWAY, Animation.empty()).length());
         return new AnimationProfile(
-                bindPose.viewmodelCamera(),
-                bindPose.itemRoot(),
-                bindPose.itemOffhandRoot(),
-                bindPose.blockRoot(),
-                bindPose.viewmodelArmR(),
-                bindPose.viewmodelArmL(),
+                effectiveBindPose.viewmodelCamera(),
+                effectiveBindPose.itemRoot(),
+                effectiveBindPose.itemOffhandRoot(),
+                effectiveBindPose.blockRoot(),
+                effectiveBindPose.viewmodelArmR(),
+                effectiveBindPose.viewmodelArmL(),
                 profileAnimations
         );
     }
@@ -1144,6 +1145,27 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             Transform viewmodelArmR,
             Transform viewmodelArmL
     ) {
+        private ProfileBindPose withFirstFrameFallbacks(EnumMap<Clip, Animation> animations) {
+            return new ProfileBindPose(
+                    this.viewmodelCamera,
+                    this.firstFrameTransform(animations, Bone.ITEM_ROOT, this.itemRoot),
+                    this.firstFrameTransform(animations, Bone.ITEM_OFFHAND_ROOT, this.itemOffhandRoot),
+                    this.firstFrameTransform(animations, Bone.BLOCK_ROOT, this.blockRoot),
+                    this.firstFrameTransform(animations, Bone.VIEWMODEL_ARM_R, this.viewmodelArmR),
+                    this.firstFrameTransform(animations, Bone.VIEWMODEL_ARM_L, this.viewmodelArmL)
+            );
+        }
+
+        private Transform firstFrameTransform(EnumMap<Clip, Animation> animations, Bone bone, Transform fallback) {
+            for (Clip clip : Clip.values()) {
+                Animation animation = animations.getOrDefault(clip, Animation.empty());
+                Transform transform = animation.firstFrameTransformOrNull(bone);
+                if (transform != null) {
+                    return transform;
+                }
+            }
+            return fallback;
+        }
     }
 
     private record AnimationProfile(
@@ -1541,6 +1563,22 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             return Transform.lerp(from, to, alpha);
         }
 
+        public Transform firstFrameTransform(Bone bone, Transform fallback) {
+            if (this.frames.isEmpty()) {
+                return fallback;
+            }
+
+            return this.frames.get(0).transformOrFallback(bone, fallback);
+        }
+
+        public Transform firstFrameTransformOrNull(Bone bone) {
+            if (this.frames.isEmpty()) {
+                return null;
+            }
+
+            return this.frames.get(0).transformOrNull(bone);
+        }
+
         private float loopedFrame(float absoluteFrame) {
             int lastFrame = this.frames.get(this.frames.size() - 1).frame();
             float duration = Math.max(1.0F, lastFrame - this.startFrame + 1.0F);
@@ -1605,7 +1643,12 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
 
         public Transform transformOrFallback(Bone bone, Transform fallback) {
-            Transform transform = switch (bone) {
+            Transform transform = this.transformOrNull(bone);
+            return transform == null ? fallback : transform;
+        }
+
+        public Transform transformOrNull(Bone bone) {
+            return switch (bone) {
                 case VIEWMODEL_CAMERA -> this.viewmodelCamera;
                 case ITEM_ROOT -> this.itemRoot;
                 case ITEM_OFFHAND_ROOT -> this.itemOffhandRoot;
@@ -1614,7 +1657,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 case VIEWMODEL_ARM_L -> this.viewmodelArmL;
                 case LEFT_BLOCK_ROOT -> this.leftBlockRoot;
             };
-            return transform == null ? fallback : transform;
         }
 
         private static Transform readBone(JsonObject bones, Bone bone) {
