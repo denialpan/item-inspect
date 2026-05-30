@@ -39,6 +39,7 @@ DEFAULT_OUTPUT = ROOT / "src/main/resources/assets/iteminspect/viewmodel/default
 DEFAULT_ANIMATION_NAME = "default"
 DEFAULT_ACTION_NAME = None
 DEFAULT_SOUND_NAMESPACE = "iteminspect"
+EXPORT_FPS = 60
 AUTHORING_TO_MINECRAFT_MATRIX = Matrix.Rotation(math.radians(-90.0), 4, "X")
 
 EXPORT_SOURCES = {
@@ -308,9 +309,12 @@ def export_sound_events(start_frame: int, end_frame: int):
     if sequence_editor is None:
         return []
 
+    muted_channels = muted_sequence_channels(sequence_editor)
     events = []
     for strip in sequence_editor.sequences_all:
         if strip.type != "SOUND":
+            continue
+        if is_strip_disabled(strip, muted_channels):
             continue
 
         frame = int(round(strip.frame_final_start))
@@ -338,6 +342,32 @@ def export_sound_events(start_frame: int, end_frame: int):
 
     events.sort(key=lambda event: (event["frame"], event["sound"]))
     return events
+
+
+def muted_sequence_channels(sequence_editor) -> set[int]:
+    muted = set()
+    channels = getattr(sequence_editor, "channels", None)
+    if channels is None:
+        return muted
+
+    for index, channel in enumerate(channels, start=1):
+        if not getattr(channel, "mute", False):
+            continue
+
+        channel_number = getattr(channel, "channel", None)
+        if channel_number is None:
+            channel_number = index
+        muted.add(int(channel_number))
+
+    return muted
+
+
+def is_strip_disabled(strip, muted_channels: set[int]) -> bool:
+    if getattr(strip, "mute", False):
+        return True
+
+    channel = getattr(strip, "channel", None)
+    return channel in muted_channels
 
 
 def sound_id_from_strip(strip) -> str:
@@ -406,7 +436,7 @@ def build_export_data(animation_name: str, start_frame: int, end_frame: int | No
     if end_frame is not None and end_frame >= start_frame:
         events = export_sound_events(start_frame, end_frame)
         animation_data = {
-            "fps": bpy.context.scene.render.fps,
+            "fps": EXPORT_FPS,
             "start_frame": start_frame,
             "end_frame": end_frame,
             "length_frames": end_frame - start_frame + 1,
@@ -429,6 +459,7 @@ def write_export(output: Path, data: dict) -> None:
 
 
 def main() -> None:
+    bpy.context.scene.render.fps = EXPORT_FPS
     armature = selected_viewmodel_armature()
     original_action = armature.animation_data.action if armature.animation_data is not None else None
     action_name = action_name_from_args()

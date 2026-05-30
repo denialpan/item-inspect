@@ -514,7 +514,7 @@ def create_scene() -> None:
 
     bpy.context.scene.render.resolution_x = 1920
     bpy.context.scene.render.resolution_y = 1080
-    bpy.context.scene.render.fps = 20
+    bpy.context.scene.render.fps = 60
     bpy.context.scene.unit_settings.system = "METRIC"
 
     note = bpy.data.texts.new("SOURCE_NOTES")

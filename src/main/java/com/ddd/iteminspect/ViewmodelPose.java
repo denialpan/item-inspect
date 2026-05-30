@@ -436,8 +436,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
 
         this.animationTick++;
-        this.playPendingSoundEvents(this.animation.startFrame() + this.animationTick);
-        if (this.animationTick >= this.animation.length()) {
+        this.playPendingSoundEvents(this.animation.frameAtTick(this.animationTick));
+        if (this.animationTick >= this.animation.lengthTicks()) {
             this.finishCurrentClip(selectedStack);
         }
     }
@@ -635,7 +635,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             return fallback;
         }
 
-        return this.animation.sample(bone, this.animationTick + partialTick, fallback);
+        return this.animation.sample(bone, this.animationFramePosition(partialTick), fallback);
+    }
+
+    private float animationFramePosition(float partialTick) {
+        return this.animation.framePosition(this.animationTick + partialTick);
     }
 
     private Transform layeredTransform(Bone bone, Transform fallback, float partialTick) {
@@ -1399,8 +1403,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             if (this.animationTick >= RESTART_BLEND_TICKS) {
                 this.restartBlendFrom.clear();
             }
-            this.playPendingSoundEvents(this.animation.startFrame() + this.animationTick);
-            if (this.animationTick < this.animation.length()) {
+            this.playPendingSoundEvents(this.animation.frameAtTick(this.animationTick));
+            if (this.animationTick < this.animation.lengthTicks()) {
                 return;
             }
 
@@ -1432,7 +1436,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             }
 
             Transform profileFallback = this.profile.bindFallback(bone);
-            Transform transform = this.animation.sample(bone, this.animationTick + partialTick, profileFallback);
+            Transform transform = this.animation.sample(bone, this.animationFramePosition(partialTick), profileFallback);
             if (this.restartBlendFrom.isEmpty()) {
                 return transform;
             }
@@ -1478,7 +1482,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 return fallback;
             }
 
-            return this.animation.sample(bone, this.animationTick, fallback);
+            return this.animation.sample(bone, this.animation.framePosition(this.animationTick), fallback);
+        }
+
+        private float animationFramePosition(float partialTick) {
+            return this.animation.framePosition(this.animationTick + partialTick);
         }
 
         private void playPendingSoundEvents(int currentFrame) {
@@ -1535,9 +1543,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     }
 
-    private record Animation(boolean loop, int startFrame, List<AnimationFrame> frames, List<AnimationSoundEvent> soundEvents) {
+    private record Animation(boolean loop, int startFrame, int fps, List<AnimationFrame> frames, List<AnimationSoundEvent> soundEvents) {
         public static Animation empty() {
-            return new Animation(false, 0, List.of(), List.of());
+            return new Animation(false, 0, 20, List.of(), List.of());
         }
 
         public static Animation read(JsonObject root, Transform cameraBind, Transform itemBind, Transform offhandItemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
@@ -1560,7 +1568,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             frames.sort(Comparator.comparingInt(AnimationFrame::frame));
             List<AnimationSoundEvent> soundEvents = readSoundEvents(animationJson);
             int startFrame = GsonHelper.getAsInt(animationJson, "start_frame", frames.isEmpty() ? 0 : frames.get(0).frame());
-            return frames.isEmpty() ? empty() : new Animation(loop, startFrame, List.copyOf(frames), soundEvents);
+            int fps = Math.max(1, GsonHelper.getAsInt(animationJson, "fps", 20));
+            return frames.isEmpty() ? empty() : new Animation(loop, startFrame, fps, List.copyOf(frames), soundEvents);
         }
 
         private static List<AnimationSoundEvent> readSoundEvents(JsonObject animationJson) {
@@ -1595,6 +1604,22 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
             int lastFrame = this.frames.get(this.frames.size() - 1).frame();
             return Math.max(1, lastFrame - this.startFrame + 1);
+        }
+
+        public int lengthTicks() {
+            return Math.max(1, (int) Math.ceil(this.length() / this.framesPerTick()));
+        }
+
+        public float framePosition(float elapsedTicks) {
+            return elapsedTicks * this.framesPerTick();
+        }
+
+        public int frameAtTick(int elapsedTicks) {
+            return (int) Math.floor(this.startFrame + this.framePosition(elapsedTicks));
+        }
+
+        private float framesPerTick() {
+            return this.fps / 20.0F;
         }
 
         public Transform sample(Bone bone, float framePosition, Transform fallback) {
