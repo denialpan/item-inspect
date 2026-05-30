@@ -309,12 +309,12 @@ def export_sound_events(start_frame: int, end_frame: int):
     if sequence_editor is None:
         return []
 
-    muted_channels = muted_sequence_channels(sequence_editor)
+    disabled_channels = disabled_sound_channels(sequence_editor)
     events = []
     for strip in sequence_editor.sequences_all:
         if strip.type != "SOUND":
             continue
-        if is_strip_disabled(strip, muted_channels):
+        if is_strip_disabled(strip, disabled_channels):
             continue
 
         frame = int(round(strip.frame_final_start))
@@ -344,6 +344,19 @@ def export_sound_events(start_frame: int, end_frame: int):
     return events
 
 
+def disabled_sound_channels(sequence_editor) -> set[int]:
+    disabled = muted_sequence_channels(sequence_editor)
+    for strip in sequence_editor.sequences_all:
+        if strip.type != "SOUND" or not getattr(strip, "mute", False):
+            continue
+
+        channel = strip_channel(strip)
+        if channel is not None:
+            disabled.add(channel)
+
+    return disabled
+
+
 def muted_sequence_channels(sequence_editor) -> set[int]:
     muted = set()
     channels = getattr(sequence_editor, "channels", None)
@@ -356,7 +369,7 @@ def muted_sequence_channels(sequence_editor) -> set[int]:
 
         channel_number = getattr(channel, "channel", None)
         if channel_number is None:
-            channel_number = index
+            channel_number = channel_number_from_name(getattr(channel, "name", "")) or index
         muted.add(int(channel_number))
 
     return muted
@@ -366,8 +379,18 @@ def is_strip_disabled(strip, muted_channels: set[int]) -> bool:
     if getattr(strip, "mute", False):
         return True
 
-    channel = getattr(strip, "channel", None)
+    channel = strip_channel(strip)
     return channel in muted_channels
+
+
+def strip_channel(strip) -> int | None:
+    channel = getattr(strip, "channel", None)
+    return int(channel) if channel is not None else None
+
+
+def channel_number_from_name(name: str) -> int | None:
+    digits = "".join(character for character in name if character.isdigit())
+    return int(digits) if digits else None
 
 
 def sound_id_from_strip(strip) -> str:
