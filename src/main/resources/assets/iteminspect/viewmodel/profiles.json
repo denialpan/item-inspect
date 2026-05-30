@@ -1,29 +1,34 @@
 {
+  "profiles": {
+    "default": "iteminspect:viewmodel/default/profile.json",
+    "empty": "iteminspect:viewmodel/empty/profile.json",
+    "swords": "iteminspect:viewmodel/swords/profile.json"
+  },
   "primary": {
-    "default": "iteminspect:viewmodel/default/profile_primary.json",
+    "default": "default",
     "items": {
-      "tacz:ammo_box": "iteminspect:viewmodel/swords/profile.json",
-      "minecraft:golden_apple": "iteminspect:viewmodel/swords/profile.json"
+      "tacz:ammo_box": "swords",
+      "minecraft:golden_apple": "swords"
     },
     "tags": [
       {
         "id": "minecraft:swords",
-        "profile": "iteminspect:viewmodel/swords/profile_primary.json"
+        "profile": "swords"
       }
     ]
   },
   "secondary": {
-    "default": "iteminspect:viewmodel/default/profile_secondary.json",
+    "default": "default",
     "tags": [
       {
         "id": "minecraft:swords",
-        "profile": "iteminspect:viewmodel/swords/profile_secondary.json"
+        "profile": "swords"
       }
     ]
   },
   "both": {
-    "default": "iteminspect:viewmodel/default/profile_both.json",
-    "empty": "iteminspect:viewmodel/empty/profile_both.json",
+    "default": "default",
+    "empty": "empty",
     "rules": [
       {
         "primary": {
@@ -32,9 +37,9 @@
         "secondary": {
           "tag": "minecraft:swords"
         },
-        "profile": "iteminspect:viewmodel/swords/profile_both.json"
+        "profile": "swords"
       }
     ]
   },
-  "empty_hands": "iteminspect:viewmodel/empty/profile_primary.json"
+  "empty_hands": "empty"
 }

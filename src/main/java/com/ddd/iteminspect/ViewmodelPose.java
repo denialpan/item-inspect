@@ -48,21 +48,22 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private Transform viewmodelArmR = Transform.identity();
     private Transform viewmodelArmL = Transform.identity();
     private final EnumMap<Clip, Animation> animations = new EnumMap<>(Clip.class);
-    private final Map<ResourceLocation, AnimationProfile> profiles = new HashMap<>();
-    private final Map<ResourceLocation, ResourceLocation> itemProfileRules = new HashMap<>();
+    private final Map<ProfileReference, AnimationProfile> profiles = new HashMap<>();
+    private final Map<String, ResourceLocation> profileAliases = new HashMap<>();
+    private final Map<ResourceLocation, ProfileReference> itemProfileRules = new HashMap<>();
     private final List<TagProfileRule> tagProfileRules = new ArrayList<>();
-    private final Map<ResourceLocation, ResourceLocation> offhandItemProfileRules = new HashMap<>();
+    private final Map<ResourceLocation, ProfileReference> offhandItemProfileRules = new HashMap<>();
     private final List<TagProfileRule> offhandTagProfileRules = new ArrayList<>();
     private final List<BothHandsProfileRule> bothHandsProfileRules = new ArrayList<>();
     private final HandLayer mainHandLayer = new HandLayer(HandLayerSide.MAIN);
     private final HandLayer offhandLayer = new HandLayer(HandLayerSide.OFFHAND);
     private Animation animation = Animation.empty();
-    private ResourceLocation fallbackProfileId;
-    private ResourceLocation offhandFallbackProfileId;
-    private ResourceLocation bothHandsFallbackProfileId;
-    private ResourceLocation emptyHandsProfileId;
-    private ResourceLocation emptyBothHandsProfileId;
-    private ResourceLocation activeProfileId;
+    private ProfileReference fallbackProfileId;
+    private ProfileReference offhandFallbackProfileId;
+    private ProfileReference bothHandsFallbackProfileId;
+    private ProfileReference emptyHandsProfileId;
+    private ProfileReference emptyBothHandsProfileId;
+    private ProfileReference activeProfileId;
     private boolean visualStackWasEmpty;
     private State state = State.IDLE;
     private Clip currentClip = Clip.INSPECT;
@@ -459,12 +460,12 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     private boolean activateProfile(ItemStack stack, boolean allowEmptyHands) {
-        ResourceLocation profileId = this.resolveProfile(stack, allowEmptyHands);
+        ProfileReference profileId = this.resolveProfile(stack, allowEmptyHands);
         return this.activateProfile(profileId);
     }
 
     private boolean activateInspectProfile(ItemStack mainHandStack, ItemStack offhandStack, boolean allowEmptyHands) {
-        ResourceLocation profileId = this.resolveBothHandsProfile(mainHandStack, offhandStack);
+        ProfileReference profileId = this.resolveBothHandsProfile(mainHandStack, offhandStack);
         if (profileId == null && mainHandStack.isEmpty() && offhandStack.isEmpty()) {
             profileId = this.emptyBothHandsProfileId;
         }
@@ -476,7 +477,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return this.activateProfile(profileId);
     }
 
-    private boolean activateProfile(ResourceLocation profileId) {
+    private boolean activateProfile(ProfileReference profileId) {
         if (profileId == null) {
             return false;
         }
@@ -503,7 +504,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return true;
     }
 
-    private ResourceLocation resolveBothHandsProfile(ItemStack mainHandStack, ItemStack offhandStack) {
+    private ProfileReference resolveBothHandsProfile(ItemStack mainHandStack, ItemStack offhandStack) {
         if (mainHandStack.isEmpty() || offhandStack.isEmpty()) {
             return null;
         }
@@ -517,16 +518,16 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return this.bothHandsFallbackProfileId;
     }
 
-    private ResourceLocation resolveProfile(ItemStack stack, boolean allowEmptyHands) {
+    private ProfileReference resolveProfile(ItemStack stack, boolean allowEmptyHands) {
         return this.resolveProfile(stack, allowEmptyHands, HandLayerSide.MAIN);
     }
 
-    private ResourceLocation resolveProfile(ItemStack stack, boolean allowEmptyHands, HandLayerSide side) {
+    private ProfileReference resolveProfile(ItemStack stack, boolean allowEmptyHands, HandLayerSide side) {
         if (stack.isEmpty()) {
             return allowEmptyHands ? this.emptyHandsProfileId : null;
         }
 
-        ResourceLocation profileId = this.resolveSpecificProfile(stack, side);
+        ProfileReference profileId = this.resolveSpecificProfile(stack, side);
         if (profileId != null) {
             return profileId;
         }
@@ -538,13 +539,13 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return this.fallbackProfileId;
     }
 
-    private ResourceLocation resolveSpecificProfile(ItemStack stack) {
+    private ProfileReference resolveSpecificProfile(ItemStack stack) {
         return this.resolveSpecificProfile(stack, HandLayerSide.MAIN);
     }
 
-    private ResourceLocation resolveSpecificProfile(ItemStack stack, HandLayerSide side) {
+    private ProfileReference resolveSpecificProfile(ItemStack stack, HandLayerSide side) {
         if (side == HandLayerSide.OFFHAND) {
-            ResourceLocation offhandProfile = this.resolveSpecificProfile(stack, this.offhandItemProfileRules, this.offhandTagProfileRules);
+            ProfileReference offhandProfile = this.resolveSpecificProfile(stack, this.offhandItemProfileRules, this.offhandTagProfileRules);
             if (offhandProfile != null) {
                 return offhandProfile;
             }
@@ -553,9 +554,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return this.resolveSpecificProfile(stack, this.itemProfileRules, this.tagProfileRules);
     }
 
-    private ResourceLocation resolveSpecificProfile(ItemStack stack, Map<ResourceLocation, ResourceLocation> itemRules, List<TagProfileRule> tagRules) {
+    private ProfileReference resolveSpecificProfile(ItemStack stack, Map<ResourceLocation, ProfileReference> itemRules, List<TagProfileRule> tagRules) {
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
-        ResourceLocation itemProfile = itemRules.get(itemId);
+        ProfileReference itemProfile = itemRules.get(itemId);
         if (itemProfile != null) {
             return itemProfile;
         }
@@ -704,6 +705,13 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     private void loadProfileIndex(ResourceManager resourceManager, JsonObject root) {
+        if (root.has("profiles")) {
+            JsonObject aliases = GsonHelper.getAsJsonObject(root, "profiles");
+            for (Map.Entry<String, JsonElement> entry : aliases.entrySet()) {
+                this.profileAliases.put(entry.getKey(), ResourceLocation.parse(entry.getValue().getAsString()));
+            }
+        }
+
         JsonObject primaryRoot = root.has("primary") ? GsonHelper.getAsJsonObject(root, "primary") : null;
         JsonObject secondaryRoot = root.has("secondary") ? GsonHelper.getAsJsonObject(root, "secondary") : null;
         JsonObject bothRoot = root.has("both") ? GsonHelper.getAsJsonObject(root, "both") : null;
@@ -711,42 +719,42 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         JsonObject primaryFallbackRoot = primaryRoot == null ? root : primaryRoot;
         String fallbackKey = primaryFallbackRoot.has("default") ? "default" : "fallback";
         if (primaryFallbackRoot.has(fallbackKey) && !primaryFallbackRoot.get(fallbackKey).isJsonNull()) {
-            this.fallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(primaryFallbackRoot, fallbackKey));
+            this.fallbackProfileId = this.readProfileReference(primaryFallbackRoot, fallbackKey, ProfileContext.PRIMARY);
             this.ensureProfileLoaded(resourceManager, this.fallbackProfileId);
         }
 
         if (secondaryRoot != null && secondaryRoot.has("default") && !secondaryRoot.get("default").isJsonNull()) {
-            this.offhandFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(secondaryRoot, "default"));
+            this.offhandFallbackProfileId = this.readProfileReference(secondaryRoot, "default", ProfileContext.SECONDARY);
             this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
         } else if (root.has("secondary_default") && !root.get("secondary_default").isJsonNull()) {
-            this.offhandFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "secondary_default"));
+            this.offhandFallbackProfileId = this.readProfileReference(root, "secondary_default", ProfileContext.SECONDARY);
             this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
         } else if (root.has("offhand_default") && !root.get("offhand_default").isJsonNull()) {
-            this.offhandFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "offhand_default"));
+            this.offhandFallbackProfileId = this.readProfileReference(root, "offhand_default", ProfileContext.SECONDARY);
             this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
         }
 
         if (bothRoot != null && bothRoot.has("default") && !bothRoot.get("default").isJsonNull()) {
-            this.bothHandsFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(bothRoot, "default"));
+            this.bothHandsFallbackProfileId = this.readProfileReference(bothRoot, "default", ProfileContext.BOTH);
             this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
         } else if (root.has("both_default") && !root.get("both_default").isJsonNull()) {
-            this.bothHandsFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "both_default"));
+            this.bothHandsFallbackProfileId = this.readProfileReference(root, "both_default", ProfileContext.BOTH);
             this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
         } else if (root.has("both_hands_default") && !root.get("both_hands_default").isJsonNull()) {
-            this.bothHandsFallbackProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "both_hands_default"));
+            this.bothHandsFallbackProfileId = this.readProfileReference(root, "both_hands_default", ProfileContext.BOTH);
             this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
         }
 
         if (bothRoot != null && bothRoot.has("empty") && !bothRoot.get("empty").isJsonNull()) {
-            this.emptyBothHandsProfileId = ResourceLocation.parse(GsonHelper.getAsString(bothRoot, "empty"));
+            this.emptyBothHandsProfileId = this.readProfileReference(bothRoot, "empty", ProfileContext.BOTH);
             this.ensureProfileLoaded(resourceManager, this.emptyBothHandsProfileId);
         } else if (root.has("empty_both_hands") && !root.get("empty_both_hands").isJsonNull()) {
-            this.emptyBothHandsProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "empty_both_hands"));
+            this.emptyBothHandsProfileId = this.readProfileReference(root, "empty_both_hands", ProfileContext.BOTH);
             this.ensureProfileLoaded(resourceManager, this.emptyBothHandsProfileId);
         }
 
         if (root.has("empty_hands") && !root.get("empty_hands").isJsonNull()) {
-            this.emptyHandsProfileId = ResourceLocation.parse(GsonHelper.getAsString(root, "empty_hands"));
+            this.emptyHandsProfileId = this.readProfileReference(root, "empty_hands", ProfileContext.PRIMARY);
             this.ensureProfileLoaded(resourceManager, this.emptyHandsProfileId);
         }
 
@@ -771,7 +779,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         if (bothHands != null) {
             for (JsonElement element : bothHands) {
                 JsonObject ruleJson = element.getAsJsonObject();
-                ResourceLocation profileId = ResourceLocation.parse(GsonHelper.getAsString(ruleJson, "profile"));
+                ProfileReference profileId = this.readProfileReference(ruleJson, "profile", ProfileContext.BOTH);
                 this.bothHandsProfileRules.add(new BothHandsProfileRule(
                         HandMatcher.read(readHandMatcher(ruleJson, "primary", "main")),
                         HandMatcher.read(readHandMatcher(ruleJson, "secondary", "offhand")),
@@ -789,12 +797,13 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         return GsonHelper.getAsJsonObject(root, legacyKey);
     }
 
-    private void loadProfileRules(ResourceManager resourceManager, JsonObject root, Map<ResourceLocation, ResourceLocation> itemRules, List<TagProfileRule> tagRules) {
+    private void loadProfileRules(ResourceManager resourceManager, JsonObject root, Map<ResourceLocation, ProfileReference> itemRules, List<TagProfileRule> tagRules) {
+        ProfileContext context = itemRules == this.offhandItemProfileRules ? ProfileContext.SECONDARY : ProfileContext.PRIMARY;
         if (root.has("items")) {
             JsonObject items = GsonHelper.getAsJsonObject(root, "items");
             for (Map.Entry<String, JsonElement> entry : items.entrySet()) {
                 ResourceLocation itemId = ResourceLocation.parse(entry.getKey());
-                ResourceLocation profileId = ResourceLocation.parse(entry.getValue().getAsString());
+                ProfileReference profileId = this.parseProfileReference(entry.getValue().getAsString(), context);
                 itemRules.put(itemId, profileId);
                 this.ensureProfileLoaded(resourceManager, profileId);
             }
@@ -805,24 +814,36 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             for (JsonElement element : tags) {
                 JsonObject tagRule = element.getAsJsonObject();
                 ResourceLocation tagId = ResourceLocation.parse(GsonHelper.getAsString(tagRule, "id"));
-                ResourceLocation profileId = ResourceLocation.parse(GsonHelper.getAsString(tagRule, "profile"));
+                ProfileReference profileId = this.readProfileReference(tagRule, "profile", context);
                 tagRules.add(new TagProfileRule(TagKey.create(Registries.ITEM, tagId), profileId));
                 this.ensureProfileLoaded(resourceManager, profileId);
             }
         }
     }
 
-    private void ensureProfileLoaded(ResourceManager resourceManager, ResourceLocation profileId) {
+    private ProfileReference readProfileReference(JsonObject root, String key, ProfileContext context) {
+        return this.parseProfileReference(GsonHelper.getAsString(root, key), context);
+    }
+
+    private ProfileReference parseProfileReference(String value, ProfileContext context) {
+        ResourceLocation location = this.profileAliases.get(value);
+        if (location == null) {
+            location = ResourceLocation.parse(value);
+        }
+        return new ProfileReference(location, context);
+    }
+
+    private void ensureProfileLoaded(ResourceManager resourceManager, ProfileReference profileId) {
         if (this.profiles.containsKey(profileId)) {
             return;
         }
 
-        JsonObject profileRoot = this.readRequired(resourceManager, profileId);
+        JsonObject profileRoot = this.readRequired(resourceManager, profileId.location());
         this.profiles.put(profileId, this.readProfile(resourceManager, profileId, profileRoot));
     }
 
-    private AnimationProfile readProfile(ResourceManager resourceManager, ResourceLocation profileId, JsonObject root) {
-        JsonObject clips = GsonHelper.getAsJsonObject(root, "clips");
+    private AnimationProfile readProfile(ResourceManager resourceManager, ProfileReference profileId, JsonObject root) {
+        JsonObject clips = this.readContextClips(root, profileId.context());
         ResourceLocation inspectLocation = this.clipLocation(clips, Clip.INSPECT);
         JsonObject inspectRoot = this.readRequired(resourceManager, inspectLocation);
         ProfileBindPose bindPose = this.readBindPose(inspectRoot);
@@ -847,6 +868,19 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 effectiveBindPose.viewmodelArmL(),
                 profileAnimations
         );
+    }
+
+    private JsonObject readContextClips(JsonObject root, ProfileContext context) {
+        JsonObject clips = GsonHelper.getAsJsonObject(root, "clips");
+        if (clips.has("inspect")) {
+            return clips;
+        }
+
+        String contextKey = context.configKey();
+        if (!clips.has(contextKey)) {
+            throw new IllegalArgumentException("Viewmodel profile is missing clip context '" + contextKey + "'");
+        }
+        return GsonHelper.getAsJsonObject(clips, contextKey);
     }
 
     private void loadProfileClip(ResourceManager resourceManager, EnumMap<Clip, Animation> profileAnimations, ProfileBindPose bindPose, JsonObject clips, Clip clip) {
@@ -906,6 +940,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.viewmodelArmL = Transform.identity();
             this.animations.clear();
             this.profiles.clear();
+            this.profileAliases.clear();
             this.itemProfileRules.clear();
             this.tagProfileRules.clear();
             this.offhandItemProfileRules.clear();
@@ -1100,6 +1135,22 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         PUTAWAY
     }
 
+    private enum ProfileContext {
+        PRIMARY("primary"),
+        SECONDARY("secondary"),
+        BOTH("both");
+
+        private final String configKey;
+
+        ProfileContext(String configKey) {
+            this.configKey = configKey;
+        }
+
+        public String configKey() {
+            return this.configKey;
+        }
+    }
+
     private enum Bone {
         VIEWMODEL_CAMERA("viewmodel_camera"),
         ITEM_ROOT("item_root"),
@@ -1120,10 +1171,13 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
     }
 
-    private record TagProfileRule(TagKey<Item> tag, ResourceLocation profileId) {
+    private record ProfileReference(ResourceLocation location, ProfileContext context) {
     }
 
-    private record BothHandsProfileRule(HandMatcher mainHand, HandMatcher offhand, ResourceLocation profileId) {
+    private record TagProfileRule(TagKey<Item> tag, ProfileReference profileId) {
+    }
+
+    private record BothHandsProfileRule(HandMatcher mainHand, HandMatcher offhand, ProfileReference profileId) {
         private boolean matches(ItemStack mainHandStack, ItemStack offhandStack) {
             return this.mainHand.matches(mainHandStack) && this.offhand.matches(offhandStack);
         }
@@ -1300,7 +1354,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
 
         private boolean playClip(Clip clip, ItemStack stack, boolean allowEmptyHands, State targetState) {
-            ResourceLocation profileId = ViewmodelPose.this.resolveProfile(stack, allowEmptyHands, this.side);
+            ProfileReference profileId = ViewmodelPose.this.resolveProfile(stack, allowEmptyHands, this.side);
             if (profileId == null) {
                 return false;
             }

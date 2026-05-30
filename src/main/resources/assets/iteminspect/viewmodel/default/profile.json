@@ -1,7 +1,19 @@
 {
   "clips": {
-    "inspect": "iteminspect:viewmodel/default/default_primary_inspect.json",
-    "pullout": "iteminspect:viewmodel/default/default_primary_pullout.json",
-    "putaway": "iteminspect:viewmodel/default/default_primary_putaway.json"
+    "primary": {
+      "inspect": "iteminspect:viewmodel/default/default_primary_inspect.json",
+      "pullout": "iteminspect:viewmodel/default/default_primary_pullout.json",
+      "putaway": "iteminspect:viewmodel/default/default_primary_putaway.json"
+    },
+    "secondary": {
+      "inspect": "iteminspect:viewmodel/default/default_secondary_inspect.json",
+      "pullout": "iteminspect:viewmodel/default/default_secondary_pullout.json",
+      "putaway": "iteminspect:viewmodel/default/default_secondary_putaway.json"
+    },
+    "both": {
+      "inspect": "iteminspect:viewmodel/default/default_both_inspect.json",
+      "pullout": "iteminspect:viewmodel/default/default_primary_pullout.json",
+      "putaway": "iteminspect:viewmodel/default/default_primary_putaway.json"
+    }
   }
 }

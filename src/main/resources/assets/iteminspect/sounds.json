@@ -1,4 +1,34 @@
 {
+  "arm_move_1": {
+    "sounds": [
+      "iteminspect:arm_movement/arm_move_1"
+    ]
+  },
+  "arm_move_2": {
+    "sounds": [
+      "iteminspect:arm_movement/arm_move_2"
+    ]
+  },
+  "arm_move_3": {
+    "sounds": [
+      "iteminspect:arm_movement/arm_move_3"
+    ]
+  },
+  "arm_move_4": {
+    "sounds": [
+      "iteminspect:arm_movement/arm_move_4"
+    ]
+  },
+  "arm_move_5": {
+    "sounds": [
+      "iteminspect:arm_movement/arm_move_5"
+    ]
+  },
+  "arm_thud": {
+    "sounds": [
+      "iteminspect:arm_movement/arm_thud"
+    ]
+  },
   "arm_movement/arm_move_1": {
     "sounds": [
       "iteminspect:arm_movement/arm_move_1"

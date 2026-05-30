@@ -1,7 +1,0 @@
-{
-  "clips": {
-    "inspect": "iteminspect:viewmodel/empty/empty_both_inspect.json",
-    "pullout": "iteminspect:viewmodel/empty/empty_primary_pullout.json",
-    "putaway": "iteminspect:viewmodel/empty/empty_primary_putaway.json"
-  }
-}

@@ -1249,6 +1249,14 @@
             }
           }
         }
+      ],
+      "events": [
+        {
+          "frame": 2,
+          "type": "sound",
+          "sound": "iteminspect:arm_move_1",
+          "volume": 1.0
+        }
       ]
     }
   }
