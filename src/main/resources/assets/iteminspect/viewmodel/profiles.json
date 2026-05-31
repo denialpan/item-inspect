@@ -16,7 +16,8 @@
       "putaway": "iteminspect:viewmodel/empty/empty_primary_putaway.json"
     },
 
-    "empty_inspect": "iteminspect:viewmodel/empty/empty_both_inspect.json"
+    "empty_inspect": "iteminspect:viewmodel/empty/empty_both_inspect.json",
+    "default_block_both_inspect": "iteminspect:viewmodel/default/default_block_both_inspect.json"
   },
 
   "equip": {
@@ -52,6 +53,15 @@
         },
         "offhand": {
           "empty": true
+        }
+      },
+      {
+        "animation": "default_block_both_inspect",
+        "main_hand": {
+          "block_item": true
+        },
+        "offhand": {
+          "block_item": true
         }
       }
     ]
