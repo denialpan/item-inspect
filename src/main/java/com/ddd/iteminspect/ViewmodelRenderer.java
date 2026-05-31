@@ -56,7 +56,7 @@ public final class ViewmodelRenderer {
         }
 
         boolean leftMainHand = minecraft.player.getMainArm() == HumanoidArm.LEFT;
-        if (!pose.isSharedPlaying()) {
+        if (!pose.isSharedPlaying() && !pose.isCancelHandBlendActive()) {
             if (event.getHand() == InteractionHand.MAIN_HAND) {
                 if (!pose.isMainHandLayerActive()) {
                     return;

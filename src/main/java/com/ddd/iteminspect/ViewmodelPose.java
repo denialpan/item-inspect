@@ -75,6 +75,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private boolean queuedPulloutAllowsEmptyHands;
     private EnumMap<Bone, Transform> restartBlendFrom = new EnumMap<>(Bone.class);
     private EnumMap<Bone, Transform> cancelBlendFrom = new EnumMap<>(Bone.class);
+    private EnumMap<Bone, Transform> cancelBlendTo = new EnumMap<>(Bone.class);
+    private boolean cancelBlendRendersHands;
     private int animationTick;
     private int cancelBlendTick;
     private int equipBlendWindowTick;
@@ -141,7 +143,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public boolean isPlaying() {
-        return this.isSharedPlaying() || this.mainHandLayer.isActive() || this.offhandLayer.isActive();
+        return this.isSharedPlaying() || this.mainHandLayer.isActive() || this.offhandLayer.isActive() || !this.cancelBlendFrom.isEmpty();
     }
 
     public boolean isCameraActive() {
@@ -149,15 +151,23 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public boolean shouldSuppressVanillaMainHandEquip() {
-        return this.isSharedPlaying() || this.mainHandLayer.isActive() || this.equipBlendWindowTick > 0;
+        return this.isSharedPlaying() || this.isCancelHandBlendActive() || this.mainHandLayer.isActive() || this.equipBlendWindowTick > 0;
     }
 
     public boolean shouldSuppressVanillaOffhandEquip() {
-        return this.isSharedPlaying() || this.offhandLayer.isActive() || this.offhandEquipBlendWindowTick > 0;
+        return this.isSharedPlaying() || this.isCancelHandBlendActive() || this.offhandLayer.isActive() || this.offhandEquipBlendWindowTick > 0;
     }
 
     public boolean isSharedPlaying() {
         return this.playing && (this.state == State.PULLOUT || this.state == State.INSPECT || this.state == State.PUTAWAY);
+    }
+
+    public boolean isCancelBlendActive() {
+        return !this.cancelBlendFrom.isEmpty();
+    }
+
+    public boolean isCancelHandBlendActive() {
+        return this.cancelBlendRendersHands && this.isCancelBlendActive();
     }
 
     public boolean shouldRenderEmptyOffhandArm() {
@@ -359,6 +369,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 }
             }
             this.cancelBlendFrom.clear();
+            this.cancelBlendTo.clear();
+            this.cancelBlendRendersHands = false;
             this.cancelBlendTick = 0;
             this.equipBlendWindowTick = 0;
             this.animationTick = 0;
@@ -381,6 +393,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public void cancelAnimation() {
+        this.cancelAnimation(true);
+    }
+
+    public void cancelAnimationForAttack() {
+        this.cancelAnimation(false);
+    }
+
+    private void cancelAnimation(boolean renderHandsDuringBlend) {
         if (this.state == State.PUTAWAY) {
             return;
         }
@@ -390,7 +410,13 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
         if (this.isCameraActive()) {
             this.cancelBlendFrom.clear();
-            this.cancelBlendFrom.put(Bone.VIEWMODEL_CAMERA, this.currentTransform(Bone.VIEWMODEL_CAMERA, this.viewmodelCamera, 0.0F));
+            this.cancelBlendTo.clear();
+            for (Bone bone : Bone.values()) {
+                Transform fallback = this.bindFallback(bone);
+                this.cancelBlendFrom.put(bone, this.currentTransform(bone, fallback, 0.0F));
+                this.cancelBlendTo.put(bone, this.animation.lastFrameTransform(bone, fallback));
+            }
+            this.cancelBlendRendersHands = renderHandsDuringBlend;
             this.cancelBlendTick = 0;
         }
         this.animationTick = 0;
@@ -398,7 +424,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.skipNextAnimationTick = false;
         this.playing = false;
         this.state = State.IDLE;
-        this.renderEmptyOffhandArm = false;
         this.restartBlendFrom.clear();
     }
 
@@ -420,6 +445,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.queuedPulloutAllowsEmptyHands = false;
         this.restartBlendFrom.clear();
         this.cancelBlendFrom.clear();
+        this.cancelBlendTo.clear();
+        this.cancelBlendRendersHands = false;
         this.mainHandLayer.cancel();
         this.offhandLayer.cancel();
     }
@@ -429,7 +456,10 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.cancelBlendTick++;
             if (this.cancelBlendTick >= CANCEL_BLEND_TICKS) {
                 this.cancelBlendFrom.clear();
+                this.cancelBlendTo.clear();
+                this.cancelBlendRendersHands = false;
                 this.cancelBlendTick = 0;
+                this.renderEmptyOffhandArm = false;
             }
         }
         if (this.equipBlendWindowTick > 0) {
@@ -623,14 +653,24 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             return;
         }
 
-        this.cancelAnimation();
+        this.playing = false;
+        this.animationTick = 0;
+        this.skipNextAnimationTick = false;
+        this.restartBlendFrom.clear();
+        this.cancelBlendFrom.clear();
+        this.cancelBlendTo.clear();
+        this.cancelBlendRendersHands = false;
+        this.cancelBlendTick = 0;
+        this.state = State.IDLE;
+        this.renderEmptyOffhandArm = false;
     }
 
     private Transform currentTransform(Bone bone, Transform fallback, float partialTick) {
-        if (bone == Bone.VIEWMODEL_CAMERA && !this.cancelBlendFrom.isEmpty() && !this.playing) {
+        if (!this.cancelBlendFrom.isEmpty() && !this.playing) {
             float alpha = Math.min((this.cancelBlendTick + partialTick) / CANCEL_BLEND_TICKS, 1.0F);
             Transform from = this.cancelBlendFrom.getOrDefault(bone, fallback);
-            return Transform.lerp(from, fallback, smoothStep(alpha));
+            Transform to = this.cancelBlendTo.getOrDefault(bone, fallback);
+            return Transform.lerp(from, to, smoothStep(alpha));
         }
 
         Transform transform = this.currentTransformWithoutRestartBlend(bone, fallback, partialTick);
@@ -1057,6 +1097,8 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.skipNextAnimationTick = false;
             this.restartBlendFrom.clear();
             this.cancelBlendFrom.clear();
+            this.cancelBlendTo.clear();
+            this.cancelBlendRendersHands = false;
             this.cancelBlendTick = 0;
             this.equipBlendWindowTick = 0;
             this.nextSoundEventIndex = 0;
@@ -1753,6 +1795,14 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             }
 
             return this.frames.get(0).transformOrFallback(bone, fallback);
+        }
+
+        public Transform lastFrameTransform(Bone bone, Transform fallback) {
+            if (this.frames.isEmpty()) {
+                return fallback;
+            }
+
+            return this.frames.get(this.frames.size() - 1).transformOrFallback(bone, fallback);
         }
 
         public Transform firstFrameTransformOrNull(Bone bone) {

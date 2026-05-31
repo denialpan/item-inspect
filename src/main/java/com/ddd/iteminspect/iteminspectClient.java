@@ -128,7 +128,7 @@ public class iteminspectClient {
             lastBothHandsEmpty = bothHandsEmpty;
             tickExternalHandoff(selectedStack, offhandStack);
             if (minecraft.options.keyAttack.isDown()) {
-                ViewmodelPose.INSTANCE.cancelAnimation();
+                ViewmodelPose.INSTANCE.cancelAnimationForAttack();
             }
             if (dropVanillaFallbackTicks > 0) {
                 dropVanillaFallbackTicks--;
