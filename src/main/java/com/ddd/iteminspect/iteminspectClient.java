@@ -202,7 +202,7 @@ public class iteminspectClient {
 
     private static void queueExternalHandoff(ItemStack stack, ItemStack offhandStack, boolean allowEmptyHands, int handoffTicks) {
         boolean queueMainHand = ViewmodelPose.INSTANCE.hasProfileFor(stack, allowEmptyHands);
-        boolean queueOffhand = !offhandStack.isEmpty() && !isExternalItem(offhandStack) && ViewmodelPose.INSTANCE.hasProfileFor(offhandStack, false);
+        boolean queueOffhand = !offhandStack.isEmpty() && !isExternalItem(offhandStack) && ViewmodelPose.INSTANCE.hasOffhandProfileFor(offhandStack);
         if (!queueMainHand && !queueOffhand) {
             clearExternalHandoff();
             return;
@@ -234,7 +234,7 @@ public class iteminspectClient {
     }
 
     private static void updateQueuedExternalHandoffOffhand(ItemStack stack) {
-        queuedExternalHandoffOffhandStack = !stack.isEmpty() && !isExternalItem(stack) && ViewmodelPose.INSTANCE.hasProfileFor(stack, false)
+        queuedExternalHandoffOffhandStack = !stack.isEmpty() && !isExternalItem(stack) && ViewmodelPose.INSTANCE.hasOffhandProfileFor(stack)
                 ? stack.copy()
                 : ItemStack.EMPTY;
     }

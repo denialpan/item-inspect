@@ -1,45 +1,59 @@
 {
-  "profiles": {
-    "default": "iteminspect:viewmodel/default/profile.json",
-    "empty": "iteminspect:viewmodel/empty/profile.json",
-    "swords": "iteminspect:viewmodel/swords/profile.json"
-  },
-  "primary": {
-    "default": "default",
-    "items": {
-      "tacz:ammo_box": "swords",
-      "minecraft:golden_apple": "swords"
+  "animations": {
+
+    "default_block_primary": {
+      "pullout": "iteminspect:viewmodel/default/default_block_primary_pullout.json",
+      "putaway": "iteminspect:viewmodel/default/default_block_primary_putaway.json"
     },
-    "tags": [
-      {
-        "id": "minecraft:swords",
-        "profile": "swords"
-      }
-    ]
+
+    "default_block_secondary": {
+      "pullout": "iteminspect:viewmodel/default/default_block_secondary_pullout.json",
+      "putaway": "iteminspect:viewmodel/default/default_block_secondary_putaway.json"
+    },
+
+    "empty_main": {
+      "pullout": "iteminspect:viewmodel/empty/empty_primary_pullout.json",
+      "putaway": "iteminspect:viewmodel/empty/empty_primary_putaway.json"
+    },
+
+    "empty_inspect": "iteminspect:viewmodel/empty/empty_both_inspect.json"
   },
-  "secondary": {
-    "default": "default",
-    "tags": [
-      {
-        "id": "minecraft:swords",
-        "profile": "swords"
-      }
-    ]
+
+  "equip": {
+    "main_hand": {
+      "rules": [
+        {
+          "empty": true,
+          "animation": "empty_main"
+        },
+        {
+          "block_item": true,
+          "animation": "default_block_primary"
+        }
+      ]
+    },
+    "offhand": {
+      "rules": [
+        {
+          "block_item": true,
+          "animation": "default_block_secondary"
+        }
+      ]
+    }
   },
-  "both": {
-    "default": "default",
-    "empty": "empty",
+
+  
+  "inspect": {
     "rules": [
       {
-        "primary": {
-          "tag": "minecraft:swords"
+        "animation": "empty_inspect",
+        "main_hand": {
+          "empty": true
         },
-        "secondary": {
-          "tag": "minecraft:swords"
-        },
-        "profile": "swords"
+        "offhand": {
+          "empty": true
+        }
       }
     ]
-  },
-  "empty_hands": "empty"
+  }
 }

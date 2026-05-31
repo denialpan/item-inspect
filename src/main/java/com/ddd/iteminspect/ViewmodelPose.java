@@ -25,6 +25,7 @@ import net.minecraft.server.packs.resources.ResourceManagerReloadListener;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.tags.TagKey;
 import net.minecraft.util.GsonHelper;
+import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import org.joml.Matrix4f;
@@ -37,6 +38,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final String MODID = "iteminspect";
     private static final ResourceLocation PROFILE_INDEX_LOCATION = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/profiles.json");
+    private static final int ANIMATION_FPS = 60;
     private static final int RESTART_BLEND_TICKS = 4;
     private static final int CANCEL_BLEND_TICKS = 4;
     private static final int EQUIP_BLEND_WINDOW_TICKS = 6;
@@ -50,10 +52,13 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private final EnumMap<Clip, Animation> animations = new EnumMap<>(Clip.class);
     private final Map<ProfileReference, AnimationProfile> profiles = new HashMap<>();
     private final Map<String, ResourceLocation> profileAliases = new HashMap<>();
+    private final Map<ResourceLocation, JsonObject> inlineProfiles = new HashMap<>();
     private final Map<ResourceLocation, ProfileReference> itemProfileRules = new HashMap<>();
     private final List<TagProfileRule> tagProfileRules = new ArrayList<>();
+    private final List<MatcherProfileRule> matcherProfileRules = new ArrayList<>();
     private final Map<ResourceLocation, ProfileReference> offhandItemProfileRules = new HashMap<>();
     private final List<TagProfileRule> offhandTagProfileRules = new ArrayList<>();
+    private final List<MatcherProfileRule> offhandMatcherProfileRules = new ArrayList<>();
     private final List<BothHandsProfileRule> bothHandsProfileRules = new ArrayList<>();
     private final HandLayer mainHandLayer = new HandLayer(HandLayerSide.MAIN);
     private final HandLayer offhandLayer = new HandLayer(HandLayerSide.OFFHAND);
@@ -61,8 +66,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private ProfileReference fallbackProfileId;
     private ProfileReference offhandFallbackProfileId;
     private ProfileReference bothHandsFallbackProfileId;
-    private ProfileReference emptyHandsProfileId;
-    private ProfileReference emptyBothHandsProfileId;
     private ProfileReference activeProfileId;
     private boolean visualStackWasEmpty;
     private State state = State.IDLE;
@@ -79,6 +82,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private int nextSoundEventIndex;
     private boolean skipNextAnimationTick;
     private boolean playing;
+    private boolean renderEmptyOffhandArm;
     private boolean loaded;
 
     private ViewmodelPose() {
@@ -117,7 +121,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public Transform leftBlockRoot(float partialTick) {
-        return this.currentTransform(Bone.LEFT_BLOCK_ROOT, this.blockRoot.mirroredTransform(), partialTick);
+        return this.currentTransform(Bone.ITEM_OFFHAND_ROOT, this.itemOffhandRoot, partialTick);
     }
 
     public Transform leftViewmodelArmR(float partialTick) {
@@ -157,8 +161,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public boolean shouldRenderEmptyOffhandArm() {
-        return this.isSharedPlaying() && this.currentClip == Clip.INSPECT && this.emptyBothHandsProfileId != null
-                && this.emptyBothHandsProfileId.equals(this.activeProfileId);
+        return this.isSharedPlaying() && this.currentClip == Clip.INSPECT && this.renderEmptyOffhandArm;
     }
 
     public boolean isMainHandLayerActive() {
@@ -174,11 +177,19 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     public boolean hasProfileFor(ItemStack stack, boolean allowEmptyHands) {
-        return this.resolveProfile(stack, allowEmptyHands) != null;
+        return this.hasProfileFor(stack, allowEmptyHands, HandLayerSide.MAIN);
+    }
+
+    public boolean hasOffhandProfileFor(ItemStack stack) {
+        return this.hasProfileFor(stack, false, HandLayerSide.OFFHAND);
     }
 
     public boolean hasSpecificProfileFor(ItemStack stack) {
         return !stack.isEmpty() && this.resolveSpecificProfile(stack) != null;
+    }
+
+    private boolean hasProfileFor(ItemStack stack, boolean allowEmptyHands, HandLayerSide side) {
+        return this.resolveProfile(stack, allowEmptyHands, side) != null;
     }
 
     private boolean hasSettledVisualStack() {
@@ -208,16 +219,19 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         if (this.state == State.PUTAWAY || this.equipBlendWindowTick > 0) {
             return;
         }
+        boolean bothHandsEmpty = mainHandStack.isEmpty() && offhandStack.isEmpty();
         EnumMap<Bone, Transform> restartBlend = this.isPlaying() ? this.captureCurrentTransforms() : new EnumMap<>(Bone.class);
         this.mainHandLayer.cancel();
         this.offhandLayer.cancel();
         if (!this.activateInspectProfile(mainHandStack, offhandStack, allowEmptyHands)) {
             return;
         }
-        if (this.playClip(Clip.INSPECT, mainHandStack.isEmpty() ? offhandStack : mainHandStack, State.INSPECT)
-                && !restartBlend.isEmpty()) {
-            this.restartBlendFrom.clear();
-            this.restartBlendFrom.putAll(restartBlend);
+        if (this.playClip(Clip.INSPECT, mainHandStack.isEmpty() ? offhandStack : mainHandStack, State.INSPECT)) {
+            this.renderEmptyOffhandArm = bothHandsEmpty;
+            if (!restartBlend.isEmpty()) {
+                this.restartBlendFrom.clear();
+                this.restartBlendFrom.putAll(restartBlend);
+            }
         }
     }
 
@@ -384,6 +398,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.skipNextAnimationTick = false;
         this.playing = false;
         this.state = State.IDLE;
+        this.renderEmptyOffhandArm = false;
         this.restartBlendFrom.clear();
     }
 
@@ -396,6 +411,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         this.offhandEquipBlendWindowTick = 0;
         this.playing = false;
         this.state = State.IDLE;
+        this.renderEmptyOffhandArm = false;
         this.currentClip = Clip.INSPECT;
         this.activeProfileId = null;
         this.visualStack = ItemStack.EMPTY;
@@ -466,9 +482,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     private boolean activateInspectProfile(ItemStack mainHandStack, ItemStack offhandStack, boolean allowEmptyHands) {
         ProfileReference profileId = this.resolveBothHandsProfile(mainHandStack, offhandStack);
-        if (profileId == null && mainHandStack.isEmpty() && offhandStack.isEmpty()) {
-            profileId = this.emptyBothHandsProfileId;
-        }
         if (profileId == null) {
             profileId = mainHandStack.isEmpty()
                     ? this.resolveProfile(offhandStack, allowEmptyHands, HandLayerSide.OFFHAND)
@@ -505,10 +518,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     private ProfileReference resolveBothHandsProfile(ItemStack mainHandStack, ItemStack offhandStack) {
-        if (mainHandStack.isEmpty() || offhandStack.isEmpty()) {
-            return null;
-        }
-
         for (BothHandsProfileRule rule : this.bothHandsProfileRules) {
             if (rule.matches(mainHandStack, offhandStack)) {
                 return rule.profileId();
@@ -524,7 +533,11 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     private ProfileReference resolveProfile(ItemStack stack, boolean allowEmptyHands, HandLayerSide side) {
         if (stack.isEmpty()) {
-            return allowEmptyHands ? this.emptyHandsProfileId : null;
+            if (!allowEmptyHands) {
+                return null;
+            }
+
+            return this.resolveSpecificProfile(stack, side);
         }
 
         ProfileReference profileId = this.resolveSpecificProfile(stack, side);
@@ -545,24 +558,32 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     private ProfileReference resolveSpecificProfile(ItemStack stack, HandLayerSide side) {
         if (side == HandLayerSide.OFFHAND) {
-            ProfileReference offhandProfile = this.resolveSpecificProfile(stack, this.offhandItemProfileRules, this.offhandTagProfileRules);
+            ProfileReference offhandProfile = this.resolveSpecificProfile(stack, this.offhandItemProfileRules, this.offhandTagProfileRules, this.offhandMatcherProfileRules);
             if (offhandProfile != null) {
                 return offhandProfile;
             }
         }
 
-        return this.resolveSpecificProfile(stack, this.itemProfileRules, this.tagProfileRules);
+        return this.resolveSpecificProfile(stack, this.itemProfileRules, this.tagProfileRules, this.matcherProfileRules);
     }
 
-    private ProfileReference resolveSpecificProfile(ItemStack stack, Map<ResourceLocation, ProfileReference> itemRules, List<TagProfileRule> tagRules) {
-        ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
-        ProfileReference itemProfile = itemRules.get(itemId);
-        if (itemProfile != null) {
-            return itemProfile;
+    private ProfileReference resolveSpecificProfile(ItemStack stack, Map<ResourceLocation, ProfileReference> itemRules, List<TagProfileRule> tagRules, List<MatcherProfileRule> matcherRules) {
+        if (!stack.isEmpty()) {
+            ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+            ProfileReference itemProfile = itemRules.get(itemId);
+            if (itemProfile != null) {
+                return itemProfile;
+            }
+
+            for (TagProfileRule rule : tagRules) {
+                if (stack.is(rule.tag())) {
+                    return rule.profileId();
+                }
+            }
         }
 
-        for (TagProfileRule rule : tagRules) {
-            if (stack.is(rule.tag())) {
+        for (MatcherProfileRule rule : matcherRules) {
+            if (rule.matcher().matches(stack)) {
                 return rule.profileId();
             }
         }
@@ -660,7 +681,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             case BLOCK_ROOT -> this.blockRoot;
             case VIEWMODEL_ARM_R -> this.viewmodelArmR;
             case VIEWMODEL_ARM_L -> this.viewmodelArmL;
-            case LEFT_BLOCK_ROOT -> this.blockRoot.mirroredTransform();
         };
     }
 
@@ -715,62 +735,68 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 this.profileAliases.put(entry.getKey(), ResourceLocation.parse(entry.getValue().getAsString()));
             }
         }
+        if (root.has("animations")) {
+            JsonObject animations = GsonHelper.getAsJsonObject(root, "animations");
+            for (Map.Entry<String, JsonElement> entry : animations.entrySet()) {
+                ResourceLocation location = ResourceLocation.fromNamespaceAndPath(MODID, "viewmodel/inline/" + entry.getKey());
+                this.profileAliases.put(entry.getKey(), location);
+                this.inlineProfiles.put(location, this.inlineProfileRoot(entry.getValue()));
+            }
+        }
 
-        JsonObject primaryRoot = root.has("primary") ? GsonHelper.getAsJsonObject(root, "primary") : null;
-        JsonObject secondaryRoot = root.has("secondary") ? GsonHelper.getAsJsonObject(root, "secondary") : null;
-        JsonObject bothRoot = root.has("both") ? GsonHelper.getAsJsonObject(root, "both") : null;
+        JsonObject equipRoot = root.has("equip") ? GsonHelper.getAsJsonObject(root, "equip") : null;
+        JsonObject inspectRoot = root.has("inspect") ? GsonHelper.getAsJsonObject(root, "inspect") : null;
+        JsonObject primaryRoot = equipRoot != null && equipRoot.has("main_hand") ? GsonHelper.getAsJsonObject(equipRoot, "main_hand")
+                : equipRoot != null && equipRoot.has("main") ? GsonHelper.getAsJsonObject(equipRoot, "main")
+                : equipRoot != null && equipRoot.has("primary") ? GsonHelper.getAsJsonObject(equipRoot, "primary") : null;
+        JsonObject secondaryRoot = equipRoot != null && equipRoot.has("offhand") ? GsonHelper.getAsJsonObject(equipRoot, "offhand")
+                : equipRoot != null && equipRoot.has("secondary") ? GsonHelper.getAsJsonObject(equipRoot, "secondary") : null;
+        JsonObject bothRoot = inspectRoot != null ? inspectRoot : root.has("both") ? GsonHelper.getAsJsonObject(root, "both") : null;
 
         JsonObject primaryFallbackRoot = primaryRoot == null ? root : primaryRoot;
         String fallbackKey = primaryFallbackRoot.has("default") ? "default" : "fallback";
-        if (primaryFallbackRoot.has(fallbackKey) && !primaryFallbackRoot.get(fallbackKey).isJsonNull()) {
+        if (hasProfileReference(primaryFallbackRoot, fallbackKey)) {
             this.fallbackProfileId = this.readProfileReference(primaryFallbackRoot, fallbackKey, ProfileContext.PRIMARY);
+            this.ensureProfileLoaded(resourceManager, this.fallbackProfileId);
+        } else if (hasProfileReference(equipRoot, "default")) {
+            this.fallbackProfileId = this.readProfileReference(equipRoot, "default", ProfileContext.PRIMARY);
             this.ensureProfileLoaded(resourceManager, this.fallbackProfileId);
         }
 
-        if (secondaryRoot != null && secondaryRoot.has("default") && !secondaryRoot.get("default").isJsonNull()) {
+        if (hasProfileReference(secondaryRoot, "default")) {
             this.offhandFallbackProfileId = this.readProfileReference(secondaryRoot, "default", ProfileContext.SECONDARY);
             this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
-        } else if (root.has("secondary_default") && !root.get("secondary_default").isJsonNull()) {
+        } else if (hasProfileReference(equipRoot, "default")) {
+            this.offhandFallbackProfileId = this.readProfileReference(equipRoot, "default", ProfileContext.SECONDARY);
+            this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
+        } else if (hasProfileReference(root, "secondary_default")) {
             this.offhandFallbackProfileId = this.readProfileReference(root, "secondary_default", ProfileContext.SECONDARY);
             this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
-        } else if (root.has("offhand_default") && !root.get("offhand_default").isJsonNull()) {
+        } else if (hasProfileReference(root, "offhand_default")) {
             this.offhandFallbackProfileId = this.readProfileReference(root, "offhand_default", ProfileContext.SECONDARY);
             this.ensureProfileLoaded(resourceManager, this.offhandFallbackProfileId);
         }
 
-        if (bothRoot != null && bothRoot.has("default") && !bothRoot.get("default").isJsonNull()) {
+        if (hasProfileReference(bothRoot, "default")) {
             this.bothHandsFallbackProfileId = this.readProfileReference(bothRoot, "default", ProfileContext.BOTH);
             this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
-        } else if (root.has("both_default") && !root.get("both_default").isJsonNull()) {
+        } else if (hasProfileReference(root, "both_default")) {
             this.bothHandsFallbackProfileId = this.readProfileReference(root, "both_default", ProfileContext.BOTH);
             this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
-        } else if (root.has("both_hands_default") && !root.get("both_hands_default").isJsonNull()) {
+        } else if (hasProfileReference(root, "both_hands_default")) {
             this.bothHandsFallbackProfileId = this.readProfileReference(root, "both_hands_default", ProfileContext.BOTH);
             this.ensureProfileLoaded(resourceManager, this.bothHandsFallbackProfileId);
         }
 
-        if (bothRoot != null && bothRoot.has("empty") && !bothRoot.get("empty").isJsonNull()) {
-            this.emptyBothHandsProfileId = this.readProfileReference(bothRoot, "empty", ProfileContext.BOTH);
-            this.ensureProfileLoaded(resourceManager, this.emptyBothHandsProfileId);
-        } else if (root.has("empty_both_hands") && !root.get("empty_both_hands").isJsonNull()) {
-            this.emptyBothHandsProfileId = this.readProfileReference(root, "empty_both_hands", ProfileContext.BOTH);
-            this.ensureProfileLoaded(resourceManager, this.emptyBothHandsProfileId);
-        }
-
-        if (root.has("empty_hands") && !root.get("empty_hands").isJsonNull()) {
-            this.emptyHandsProfileId = this.readProfileReference(root, "empty_hands", ProfileContext.PRIMARY);
-            this.ensureProfileLoaded(resourceManager, this.emptyHandsProfileId);
-        }
-
-        this.loadProfileRules(resourceManager, primaryFallbackRoot, this.itemProfileRules, this.tagProfileRules);
+        this.loadProfileRules(resourceManager, primaryFallbackRoot, this.itemProfileRules, this.tagProfileRules, this.matcherProfileRules);
         if (root.has("main_hand")) {
-            this.loadProfileRules(resourceManager, GsonHelper.getAsJsonObject(root, "main_hand"), this.itemProfileRules, this.tagProfileRules);
+            this.loadProfileRules(resourceManager, GsonHelper.getAsJsonObject(root, "main_hand"), this.itemProfileRules, this.tagProfileRules, this.matcherProfileRules);
         }
         if (secondaryRoot != null) {
-            this.loadProfileRules(resourceManager, secondaryRoot, this.offhandItemProfileRules, this.offhandTagProfileRules);
+            this.loadProfileRules(resourceManager, secondaryRoot, this.offhandItemProfileRules, this.offhandTagProfileRules, this.offhandMatcherProfileRules);
         }
         if (root.has("offhand")) {
-            this.loadProfileRules(resourceManager, GsonHelper.getAsJsonObject(root, "offhand"), this.offhandItemProfileRules, this.offhandTagProfileRules);
+            this.loadProfileRules(resourceManager, GsonHelper.getAsJsonObject(root, "offhand"), this.offhandItemProfileRules, this.offhandTagProfileRules, this.offhandMatcherProfileRules);
         }
         JsonArray bothHands = null;
         if (bothRoot != null && bothRoot.has("rules")) {
@@ -783,9 +809,9 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         if (bothHands != null) {
             for (JsonElement element : bothHands) {
                 JsonObject ruleJson = element.getAsJsonObject();
-                ProfileReference profileId = this.readProfileReference(ruleJson, "profile", ProfileContext.BOTH);
+                ProfileReference profileId = this.readProfileReference(ruleJson, ruleJson.has("animation") ? "animation" : "profile", ProfileContext.BOTH);
                 this.bothHandsProfileRules.add(new BothHandsProfileRule(
-                        HandMatcher.read(readHandMatcher(ruleJson, "primary", "main")),
+                        HandMatcher.read(readHandMatcher(ruleJson, "main_hand", "main", "primary")),
                         HandMatcher.read(readHandMatcher(ruleJson, "secondary", "offhand")),
                         profileId
                 ));
@@ -794,14 +820,41 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
     }
 
-    private static JsonObject readHandMatcher(JsonObject root, String preferredKey, String legacyKey) {
-        if (root.has(preferredKey)) {
-            return GsonHelper.getAsJsonObject(root, preferredKey);
+    private static JsonObject readHandMatcher(JsonObject root, String... keys) {
+        for (String key : keys) {
+            if (root.has(key)) {
+                return GsonHelper.getAsJsonObject(root, key);
+            }
         }
-        return GsonHelper.getAsJsonObject(root, legacyKey);
+        throw new IllegalArgumentException("Inspect rule is missing a hand matcher");
     }
 
-    private void loadProfileRules(ResourceManager resourceManager, JsonObject root, Map<ResourceLocation, ProfileReference> itemRules, List<TagProfileRule> tagRules) {
+    private static boolean hasProfileReference(JsonObject root, String key) {
+        return root != null
+                && root.has(key)
+                && !root.get(key).isJsonNull()
+                && !GsonHelper.getAsString(root, key).isBlank();
+    }
+
+    private JsonObject inlineProfileRoot(JsonElement element) {
+        JsonObject root = new JsonObject();
+        JsonObject clips = new JsonObject();
+        if (element.isJsonPrimitive()) {
+            clips.addProperty(Clip.INSPECT.configKey(), element.getAsString());
+        } else {
+            JsonObject clipRoot = element.getAsJsonObject();
+            for (Clip clip : Clip.values()) {
+                String key = clip.configKey();
+                if (clipRoot.has(key) && !clipRoot.get(key).isJsonNull()) {
+                    clips.addProperty(key, GsonHelper.getAsString(clipRoot, key));
+                }
+            }
+        }
+        root.add("clips", clips);
+        return root;
+    }
+
+    private void loadProfileRules(ResourceManager resourceManager, JsonObject root, Map<ResourceLocation, ProfileReference> itemRules, List<TagProfileRule> tagRules, List<MatcherProfileRule> matcherRules) {
         ProfileContext context = itemRules == this.offhandItemProfileRules ? ProfileContext.SECONDARY : ProfileContext.PRIMARY;
         if (root.has("items")) {
             JsonObject items = GsonHelper.getAsJsonObject(root, "items");
@@ -820,6 +873,15 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 ResourceLocation tagId = ResourceLocation.parse(GsonHelper.getAsString(tagRule, "id"));
                 ProfileReference profileId = this.readProfileReference(tagRule, "profile", context);
                 tagRules.add(new TagProfileRule(TagKey.create(Registries.ITEM, tagId), profileId));
+                this.ensureProfileLoaded(resourceManager, profileId);
+            }
+        }
+        if (root.has("rules")) {
+            JsonArray rules = GsonHelper.getAsJsonArray(root, "rules");
+            for (JsonElement element : rules) {
+                JsonObject ruleJson = element.getAsJsonObject();
+                ProfileReference profileId = this.readProfileReference(ruleJson, ruleJson.has("animation") ? "animation" : "profile", context);
+                matcherRules.add(new MatcherProfileRule(HandMatcher.read(ruleJson), profileId));
                 this.ensureProfileLoaded(resourceManager, profileId);
             }
         }
@@ -842,18 +904,21 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             return;
         }
 
-        JsonObject profileRoot = this.readRequired(resourceManager, profileId.location());
+        JsonObject profileRoot = this.inlineProfiles.get(profileId.location());
+        if (profileRoot == null) {
+            profileRoot = this.readRequired(resourceManager, profileId.location());
+        }
         this.profiles.put(profileId, this.readProfile(resourceManager, profileId, profileRoot));
     }
 
     private AnimationProfile readProfile(ResourceManager resourceManager, ProfileReference profileId, JsonObject root) {
         JsonObject clips = this.readContextClips(root, profileId.context());
-        ResourceLocation inspectLocation = this.clipLocation(clips, Clip.INSPECT);
-        JsonObject inspectRoot = this.readRequired(resourceManager, inspectLocation);
-        ProfileBindPose bindPose = this.readBindPose(inspectRoot);
+        ResourceLocation bindLocation = this.firstClipLocation(clips);
+        JsonObject bindRoot = this.readRequired(resourceManager, bindLocation);
+        ProfileBindPose bindPose = this.readBindPose(bindRoot);
 
         EnumMap<Clip, Animation> profileAnimations = new EnumMap<>(Clip.class);
-        profileAnimations.put(Clip.INSPECT, Animation.read(inspectRoot, bindPose.viewmodelCamera(), bindPose.itemRoot(), bindPose.itemOffhandRoot(), bindPose.blockRoot(), bindPose.viewmodelArmR(), bindPose.viewmodelArmL()));
+        this.loadProfileClip(resourceManager, profileAnimations, bindPose, clips, Clip.INSPECT);
         this.loadProfileClip(resourceManager, profileAnimations, bindPose, clips, Clip.PULLOUT);
         this.loadProfileClip(resourceManager, profileAnimations, bindPose, clips, Clip.PUTAWAY);
         ProfileBindPose effectiveBindPose = bindPose.withFirstFrameFallbacks(profileAnimations);
@@ -876,7 +941,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     private JsonObject readContextClips(JsonObject root, ProfileContext context) {
         JsonObject clips = GsonHelper.getAsJsonObject(root, "clips");
-        if (clips.has("inspect")) {
+        if (clips.has("inspect") || clips.has("pullout") || clips.has("putaway")) {
             return clips;
         }
 
@@ -888,9 +953,31 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     }
 
     private void loadProfileClip(ResourceManager resourceManager, EnumMap<Clip, Animation> profileAnimations, ProfileBindPose bindPose, JsonObject clips, Clip clip) {
-        ResourceLocation location = this.clipLocation(clips, clip);
+        ResourceLocation location = this.optionalClipLocation(clips, clip);
+        if (location == null) {
+            profileAnimations.put(clip, Animation.empty());
+            return;
+        }
         JsonObject root = this.readFirstExisting(resourceManager, location);
         profileAnimations.put(clip, root == null ? Animation.empty() : Animation.read(root, bindPose.viewmodelCamera(), bindPose.itemRoot(), bindPose.itemOffhandRoot(), bindPose.blockRoot(), bindPose.viewmodelArmR(), bindPose.viewmodelArmL()));
+    }
+
+    private ResourceLocation firstClipLocation(JsonObject clips) {
+        for (Clip clip : Clip.values()) {
+            ResourceLocation location = this.optionalClipLocation(clips, clip);
+            if (location != null) {
+                return location;
+            }
+        }
+        throw new IllegalArgumentException("Viewmodel animation entry must define at least one clip");
+    }
+
+    private ResourceLocation optionalClipLocation(JsonObject clips, Clip clip) {
+        String key = clip.configKey();
+        if (!clips.has(key) || clips.get(key).isJsonNull()) {
+            return null;
+        }
+        return ResourceLocation.parse(GsonHelper.getAsString(clips, key));
     }
 
     private ResourceLocation clipLocation(JsonObject clips, Clip clip) {
@@ -926,12 +1013,12 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     private ProfileBindPose readBindPose(JsonObject root) {
         JsonObject bones = GsonHelper.getAsJsonObject(root, "bones");
-        Transform viewmodelCamera = readOptionalBone(bones, "viewmodel_camera", Transform.identity());
+        Transform viewmodelCamera = Transform.read(GsonHelper.getAsJsonObject(bones, "viewmodel_camera"));
         Transform itemRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "item_root"));
-        Transform itemOffhandRoot = readOptionalBone(bones, "item_offhand_root", itemRoot.leftHandItemTransform(itemRoot));
+        Transform itemOffhandRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "item_offhand_root"));
         Transform blockRoot = Transform.read(GsonHelper.getAsJsonObject(bones, "block_root"));
         Transform viewmodelArmR = Transform.read(GsonHelper.getAsJsonObject(bones, "viewmodel_arm_R"));
-        Transform viewmodelArmL = readOptionalBone(bones, "viewmodel_arm_L", viewmodelArmR.mirroredTransform());
+        Transform viewmodelArmL = Transform.read(GsonHelper.getAsJsonObject(bones, "viewmodel_arm_L"));
         return new ProfileBindPose(viewmodelCamera, itemRoot, itemOffhandRoot, blockRoot, viewmodelArmR, viewmodelArmL);
     }
 
@@ -945,17 +1032,18 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.animations.clear();
             this.profiles.clear();
             this.profileAliases.clear();
+            this.inlineProfiles.clear();
             this.itemProfileRules.clear();
             this.tagProfileRules.clear();
+            this.matcherProfileRules.clear();
             this.offhandItemProfileRules.clear();
             this.offhandTagProfileRules.clear();
+            this.offhandMatcherProfileRules.clear();
             this.bothHandsProfileRules.clear();
             this.animation = Animation.empty();
             this.fallbackProfileId = null;
             this.offhandFallbackProfileId = null;
             this.bothHandsFallbackProfileId = null;
-            this.emptyHandsProfileId = null;
-            this.emptyBothHandsProfileId = null;
             this.activeProfileId = null;
             this.visualStackWasEmpty = false;
             this.state = State.IDLE;
@@ -964,6 +1052,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.queuedPulloutStack = ItemStack.EMPTY;
             this.queuedPulloutAllowsEmptyHands = false;
             this.playing = false;
+            this.renderEmptyOffhandArm = false;
             this.animationTick = 0;
             this.skipNextAnimationTick = false;
             this.restartBlendFrom.clear();
@@ -972,14 +1061,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             this.equipBlendWindowTick = 0;
             this.nextSoundEventIndex = 0;
             this.loaded = false;
-    }
-
-    private static Transform readOptionalBone(JsonObject bones, String name, Transform fallback) {
-        if (!bones.has(name)) {
-            return fallback;
-        }
-
-        return Transform.read(GsonHelper.getAsJsonObject(bones, name));
     }
 
     public record Transform(float tx, float ty, float tz, float qx, float qy, float qz, float qw, float sx, float sy, float sz) {
@@ -1046,14 +1127,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         public Transform mirroredTransform() {
             Matrix4f mirror = new Matrix4f().scale(-1.0F, 1.0F, 1.0F);
             return fromMatrix(new Matrix4f(mirror).mul(this.toMatrix()).mul(mirror));
-        }
-
-        public Transform leftHandItemTransform(Transform bindPose) {
-            return this.mirroredTransform();
-        }
-
-        public Transform leftHandBlockTransform(Transform bindPose) {
-            return this.mirroredTransform();
         }
 
         private Matrix4f toMatrix() {
@@ -1161,8 +1234,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         ITEM_OFFHAND_ROOT("item_offhand_root"),
         BLOCK_ROOT("block_root"),
         VIEWMODEL_ARM_R("viewmodel_arm_R"),
-        VIEWMODEL_ARM_L("viewmodel_arm_L"),
-        LEFT_BLOCK_ROOT("left_block_root");
+        VIEWMODEL_ARM_L("viewmodel_arm_L");
 
         private final String jsonName;
 
@@ -1181,32 +1253,44 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
     private record TagProfileRule(TagKey<Item> tag, ProfileReference profileId) {
     }
 
+    private record MatcherProfileRule(HandMatcher matcher, ProfileReference profileId) {
+    }
+
     private record BothHandsProfileRule(HandMatcher mainHand, HandMatcher offhand, ProfileReference profileId) {
         private boolean matches(ItemStack mainHandStack, ItemStack offhandStack) {
             return this.mainHand.matches(mainHandStack) && this.offhand.matches(offhandStack);
         }
     }
 
-    private record HandMatcher(ResourceLocation itemId, TagKey<Item> tag) {
+    private record HandMatcher(ResourceLocation itemId, TagKey<Item> tag, boolean empty, boolean any, boolean blockItem) {
         private static HandMatcher read(JsonObject json) {
+            boolean empty = GsonHelper.getAsBoolean(json, "empty", false);
+            boolean any = GsonHelper.getAsBoolean(json, "any", false);
+            boolean blockItem = GsonHelper.getAsBoolean(json, "block_item", false);
             ResourceLocation itemId = json.has("item") ? ResourceLocation.parse(GsonHelper.getAsString(json, "item")) : null;
             TagKey<Item> tag = json.has("tag")
                     ? TagKey.create(Registries.ITEM, ResourceLocation.parse(GsonHelper.getAsString(json, "tag")))
                     : null;
-            if (itemId == null && tag == null) {
-                throw new IllegalArgumentException("Hand matcher must define either 'item' or 'tag'");
+            if (itemId == null && tag == null && !empty && !any && !blockItem) {
+                throw new IllegalArgumentException("Hand matcher must define 'item', 'tag', 'empty', 'any', or 'block_item'");
             }
-            return new HandMatcher(itemId, tag);
+            return new HandMatcher(itemId, tag, empty, any, blockItem);
         }
 
         private boolean matches(ItemStack stack) {
             if (stack.isEmpty()) {
-                return false;
+                return this.empty;
+            }
+            if (this.any) {
+                return true;
             }
             if (this.itemId != null && this.itemId.equals(BuiltInRegistries.ITEM.getKey(stack.getItem()))) {
                 return true;
             }
-            return this.tag != null && stack.is(this.tag);
+            if (this.tag != null && stack.is(this.tag)) {
+                return true;
+            }
+            return this.blockItem && stack.getItem() instanceof BlockItem;
         }
     }
 
@@ -1258,7 +1342,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 case BLOCK_ROOT -> this.blockRoot;
                 case VIEWMODEL_ARM_R -> this.viewmodelArmR;
                 case VIEWMODEL_ARM_L -> this.viewmodelArmL;
-                case LEFT_BLOCK_ROOT -> this.blockRoot.mirroredTransform();
             };
         }
     }
@@ -1302,7 +1385,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         }
 
         private void rememberSettledStack(ItemStack stack, boolean allowEmptyHands) {
-            if (!ViewmodelPose.this.hasProfileFor(stack, allowEmptyHands)) {
+            if (!ViewmodelPose.this.hasProfileFor(stack, allowEmptyHands, this.side)) {
                 return;
             }
 
@@ -1336,7 +1419,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             }
 
             ItemStack putawayStack = this.visualStackOr(oldStack).copy();
-            if (ViewmodelPose.this.hasProfileFor(putawayStack, oldAllowsEmptyHands) && (this.hasSettledVisualStack() || oldAllowsEmptyHands)) {
+            if (ViewmodelPose.this.hasProfileFor(putawayStack, oldAllowsEmptyHands, this.side) && (this.hasSettledVisualStack() || oldAllowsEmptyHands)) {
                 if (this.startPutaway(putawayStack, oldAllowsEmptyHands)) {
                     return;
                 }
@@ -1424,7 +1507,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 this.queuedPulloutAllowsEmptyHands = false;
                 this.resetPlayback();
                 this.restartBlendFrom.clear();
-                if (ViewmodelPose.this.hasProfileFor(nextStack, nextAllowsEmptyHands)) {
+                if (ViewmodelPose.this.hasProfileFor(nextStack, nextAllowsEmptyHands, this.side)) {
                     this.startPullout(nextStack, nextAllowsEmptyHands);
                 }
             }
@@ -1537,7 +1620,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
         private boolean controls(Bone bone) {
             return switch (this) {
                 case MAIN -> bone == Bone.ITEM_ROOT || bone == Bone.BLOCK_ROOT || bone == Bone.VIEWMODEL_ARM_R;
-                case OFFHAND -> bone == Bone.ITEM_OFFHAND_ROOT || bone == Bone.LEFT_BLOCK_ROOT || bone == Bone.VIEWMODEL_ARM_L;
+                case OFFHAND -> bone == Bone.ITEM_OFFHAND_ROOT || bone == Bone.VIEWMODEL_ARM_L;
             };
         }
 
@@ -1545,7 +1628,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
 
     private record Animation(boolean loop, int startFrame, int fps, List<AnimationFrame> frames, List<AnimationSoundEvent> soundEvents) {
         public static Animation empty() {
-            return new Animation(false, 0, 20, List.of(), List.of());
+            return new Animation(false, 0, ANIMATION_FPS, List.of(), List.of());
         }
 
         public static Animation read(JsonObject root, Transform cameraBind, Transform itemBind, Transform offhandItemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
@@ -1568,7 +1651,10 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             frames.sort(Comparator.comparingInt(AnimationFrame::frame));
             List<AnimationSoundEvent> soundEvents = readSoundEvents(animationJson);
             int startFrame = GsonHelper.getAsInt(animationJson, "start_frame", frames.isEmpty() ? 0 : frames.get(0).frame());
-            int fps = Math.max(1, GsonHelper.getAsInt(animationJson, "fps", 20));
+            int fps = GsonHelper.getAsInt(animationJson, "fps");
+            if (fps != ANIMATION_FPS) {
+                throw new IllegalArgumentException("Viewmodel animations must be exported at " + ANIMATION_FPS + " FPS, got " + fps);
+            }
             return frames.isEmpty() ? empty() : new Animation(loop, startFrame, fps, List.copyOf(frames), soundEvents);
         }
 
@@ -1716,8 +1802,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             Transform itemOffhandRoot,
             Transform blockRoot,
             Transform viewmodelArmR,
-            Transform viewmodelArmL,
-            Transform leftBlockRoot
+            Transform viewmodelArmL
     ) {
         public static AnimationFrame read(JsonObject json, Transform cameraBind, Transform itemBind, Transform offhandItemBind, Transform blockBind, Transform rightArmBind, Transform leftArmBind) {
             JsonObject bones = GsonHelper.getAsJsonObject(json, "bones");
@@ -1727,7 +1812,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
             Transform blockRoot = readBone(bones, Bone.BLOCK_ROOT);
             Transform viewmodelArmR = readBone(bones, Bone.VIEWMODEL_ARM_R);
             Transform viewmodelArmL = readBone(bones, Bone.VIEWMODEL_ARM_L);
-            Transform effectiveBlockRoot = blockRoot == null ? blockBind : blockRoot;
             return new AnimationFrame(
                     GsonHelper.getAsInt(json, "frame", 0),
                     viewmodelCamera,
@@ -1735,8 +1819,7 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                     itemOffhandRoot,
                     blockRoot,
                     viewmodelArmR,
-                    viewmodelArmL == null && leftArmBind == null ? null : viewmodelArmL,
-                    effectiveBlockRoot.leftHandBlockTransform(blockBind)
+                    viewmodelArmL == null && leftArmBind == null ? null : viewmodelArmL
             );
         }
 
@@ -1753,7 +1836,6 @@ public final class ViewmodelPose implements ResourceManagerReloadListener {
                 case BLOCK_ROOT -> this.blockRoot;
                 case VIEWMODEL_ARM_R -> this.viewmodelArmR;
                 case VIEWMODEL_ARM_L -> this.viewmodelArmL;
-                case LEFT_BLOCK_ROOT -> this.leftBlockRoot;
             };
         }
 
