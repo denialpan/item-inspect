@@ -271,6 +271,9 @@ def create_viewmodel_armature(item_transform: Matrix, offhand_item_transform: Ma
     item_offhand_root.use_connect = False
 
     bpy.ops.object.mode_set(mode="OBJECT")
+    for pose_bone in armature.pose.bones:
+        pose_bone.rotation_mode = "XYZ" if pose_bone.name in {"item_root", "item_offhand_root"} else "QUATERNION"
+
     add_child_of_with_inverse(armature, "viewmodel_arm_R", "item_root")
     add_child_of_with_inverse(armature, "viewmodel_arm_L", "item_offhand_root")
     armature.show_in_front = True
