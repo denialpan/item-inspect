@@ -13,6 +13,7 @@ import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.extensions.common.IClientItemExtensions;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterKeyMappingsEvent;
 import net.neoforged.neoforge.client.event.RegisterClientReloadListenersEvent;
@@ -57,12 +58,15 @@ public class iteminspectClient {
         modEventBus.addListener(iteminspectClient::onRegisterKeyMappings);
         NeoForge.EVENT_BUS.register(ViewmodelRenderer.class);
         NeoForge.EVENT_BUS.addListener(iteminspectClient::onClientTick);
+        NeoForge.EVENT_BUS.addListener(iteminspectClient::onClientPlayerLoggingIn);
+        NeoForge.EVENT_BUS.addListener(iteminspectClient::onClientPlayerLoggingOut);
     }
 
     static void onClientSetup(FMLClientSetupEvent event) {
         // Some client setup code
         LOGGER.info("HELLO FROM CLIENT SETUP");
         LOGGER.info("MINECRAFT NAME >> {}", Minecraft.getInstance().getUser().getName());
+        resetClientAnimationState();
     }
 
     static void onRegisterReloadListeners(RegisterClientReloadListenersEvent event) {
@@ -71,6 +75,14 @@ public class iteminspectClient {
 
     static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(PLAY_VIEWMODEL_ANIMATION);
+    }
+
+    static void onClientPlayerLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
+        resetClientAnimationStateFromPlayer(event.getPlayer());
+    }
+
+    static void onClientPlayerLoggingOut(ClientPlayerNetworkEvent.LoggingOut event) {
+        resetClientAnimationState();
     }
 
     static void onClientTick(ClientTickEvent.Post event) {
@@ -98,7 +110,32 @@ public class iteminspectClient {
                 }
                 clearExternalHandoff();
             }
-            if (mainHandChanged) {
+            boolean handledBothHandChange = false;
+            if (mainHandChanged && offhandChanged) {
+                boolean previousMainExternal = isExternalItem(lastSelectedStack);
+                boolean previousOffhandExternal = isExternalItem(lastOffhandStack);
+                if (dropVanillaFallbackTicks > 0) {
+                    ViewmodelPose.INSTANCE.cancelAllAnimations();
+                    clearExternalHandoff();
+                    handledBothHandChange = true;
+                } else if (externalHandoffTicks > 0 && !selectedExternal && !offhandExternal) {
+                    updateQueuedExternalHandoffMainHand(selectedStack, allowsEmptyMainHand(selectedStack));
+                    updateQueuedExternalHandoffOffhand(offhandStack);
+                    handledBothHandChange = true;
+                } else if (!selectedExternal && !offhandExternal && !previousMainExternal && !previousOffhandExternal) {
+                    clearExternalHandoff();
+                    ViewmodelPose.INSTANCE.onBothHandsChanged(
+                            lastSelectedStack,
+                            selectedStack,
+                            allowsEmptyMainHand(lastSelectedStack),
+                            allowsEmptyMainHand(selectedStack),
+                            lastOffhandStack,
+                            offhandStack
+                    );
+                    handledBothHandChange = true;
+                }
+            }
+            if (mainHandChanged && !handledBothHandChange) {
                 if (dropVanillaFallbackTicks > 0) {
                     ViewmodelPose.INSTANCE.cancelAllAnimations();
                     clearExternalHandoff();
@@ -108,7 +145,7 @@ public class iteminspectClient {
                     handleMainHandChanged(lastSelectedStack, selectedStack, offhandStack, lastBothHandsEmpty, bothHandsEmpty);
                 }
             }
-            if (offhandChanged) {
+            if (offhandChanged && !handledBothHandChange) {
                 if (dropVanillaFallbackTicks > 0) {
                     ViewmodelPose.INSTANCE.cancelAllAnimations();
                     clearExternalHandoff();
@@ -141,8 +178,7 @@ public class iteminspectClient {
             lastBothHandsEmpty = false;
             selectedStackForTick = ItemStack.EMPTY;
             dropVanillaFallbackTicks = 0;
-            clearExternalHandoff();
-            ViewmodelPose.INSTANCE.cancelAllAnimations();
+            resetClientAnimationState();
         }
 
         while (PLAY_VIEWMODEL_ANIMATION.consumeClick()) {
@@ -211,10 +247,10 @@ public class iteminspectClient {
         if (handoffTicks <= 0) {
             clearExternalHandoff();
             if (queueMainHand) {
-                ViewmodelPose.INSTANCE.startMainHandPullout(stack, allowEmptyHands);
+                ViewmodelPose.INSTANCE.startMainHandExternalPullout(stack, allowEmptyHands);
             }
             if (queueOffhand) {
-                ViewmodelPose.INSTANCE.startOffhandPullout(offhandStack);
+                ViewmodelPose.INSTANCE.startOffhandExternalPullout(offhandStack);
             }
             return;
         }
@@ -244,29 +280,111 @@ public class iteminspectClient {
             return 0;
         }
 
+        int putAwayTicks = readExternalPutawayTicks(oldStack);
+        if (putAwayTicks <= 0) {
+            LOGGER.info("TACZ handoff putaway delay for {} could not be read; using instant handoff", BuiltInRegistries.ITEM.getKey(oldStack.getItem()));
+            return 0;
+        }
+
+        LOGGER.info("TACZ handoff putaway delay for {} is {} ticks", BuiltInRegistries.ITEM.getKey(oldStack.getItem()), putAwayTicks);
+        return putAwayTicks;
+    }
+
+    private static int readExternalPutawayTicks(ItemStack oldStack) {
         try {
             Object renderer = IClientItemExtensions.of(oldStack.getItem()).getCustomRenderer();
-            if (renderer == null) {
-                return 0;
+            int rendererTicks = readPutawayTicksFromTarget(renderer, oldStack);
+            if (rendererTicks > 0) {
+                return rendererTicks;
             }
 
-            Method getPutAwayTime = renderer.getClass().getMethod("getPutAwayTime", ItemStack.class);
-            Object putAwayTime = getPutAwayTime.invoke(renderer, oldStack);
-            if (!(putAwayTime instanceof Number number)) {
-                return 0;
-            }
-
-            long putAwayMilliseconds = number.longValue();
-            if (putAwayMilliseconds <= 0L) {
-                LOGGER.info("TACZ handoff putaway delay for {} was {} ms; using instant handoff", BuiltInRegistries.ITEM.getKey(oldStack.getItem()), putAwayMilliseconds);
-                return 0;
-            }
-            int putAwayTicks = Math.max(1, (int)Math.ceil(putAwayMilliseconds / 50.0D));
-            LOGGER.info("TACZ handoff putaway delay for {} is {} ms -> {} ticks", BuiltInRegistries.ITEM.getKey(oldStack.getItem()), putAwayMilliseconds, putAwayTicks);
-            return putAwayTicks;
-        } catch (ReflectiveOperationException | RuntimeException exception) {
-            LOGGER.info("TACZ handoff putaway delay for {} could not be read; using instant handoff", BuiltInRegistries.ITEM.getKey(oldStack.getItem()), exception);
+            return readPutawayTicksFromTarget(oldStack.getItem(), oldStack);
+        } catch (RuntimeException exception) {
+            LOGGER.debug("Failed to inspect TACZ putaway delay for {}", BuiltInRegistries.ITEM.getKey(oldStack.getItem()), exception);
             return 0;
+        }
+    }
+
+    private static int readPutawayTicksFromTarget(Object target, ItemStack stack) {
+        if (target == null) {
+            return 0;
+        }
+
+        String[] methodNames = {
+                "getPutAwayTicks",
+                "getPutawayTicks",
+                "getPutAwayTick",
+                "getPutawayTick",
+                "getPutAwayTime",
+                "getPutawayTime",
+                "getPutAwayDuration",
+                "getPutawayDuration",
+                "getPutAwayMilliseconds",
+                "getPutawayMilliseconds",
+                "getPutAwayMs",
+                "getPutawayMs"
+        };
+
+        for (String methodName : methodNames) {
+            int ticks = readPutawayTicksFromMethod(target, methodName, stack);
+            if (ticks > 0) {
+                return ticks;
+            }
+        }
+
+        return 0;
+    }
+
+    private static int readPutawayTicksFromMethod(Object target, String methodName, ItemStack stack) {
+        Object value = invokePutawayMethod(target, methodName, stack, "put_away");
+        if (!(value instanceof Number number)) {
+            value = invokePutawayMethod(target, methodName, stack, "putAway");
+        }
+        if (!(value instanceof Number number)) {
+            value = invokePutawayMethod(target, methodName, stack);
+        }
+        if (!(value instanceof Number number)) {
+            value = invokePutawayMethod(target, methodName, "put_away");
+        }
+        if (!(value instanceof Number number)) {
+            value = invokePutawayMethod(target, methodName);
+        }
+        if (!(value instanceof Number number)) {
+            return 0;
+        }
+
+        double duration = number.doubleValue();
+        if (duration <= 0.0D) {
+            return 0;
+        }
+
+        String lowerName = methodName.toLowerCase();
+        if (lowerName.contains("tick")) {
+            return Math.max(1, (int)Math.ceil(duration));
+        }
+
+        return Math.max(1, (int)Math.ceil(duration / 50.0D));
+    }
+
+    private static Object invokePutawayMethod(Object target, String methodName, Object... args) {
+        Class<?>[] parameterTypes = new Class<?>[args.length];
+        for (int index = 0; index < args.length; index++) {
+            Object arg = args[index];
+            if (arg instanceof ItemStack) {
+                parameterTypes[index] = ItemStack.class;
+            } else if (arg instanceof String) {
+                parameterTypes[index] = String.class;
+            } else {
+                parameterTypes[index] = arg.getClass();
+            }
+        }
+
+        try {
+            Method method = target.getClass().getMethod(methodName, parameterTypes);
+            method.setAccessible(true);
+            return method.invoke(target, args);
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            return null;
         }
     }
 
@@ -286,10 +404,10 @@ public class iteminspectClient {
         externalHandoffTicks--;
         if (externalHandoffTicks == 0) {
             if (queuedExternalHandoffHasMainHand) {
-                ViewmodelPose.INSTANCE.startMainHandPullout(selectedStack, queuedExternalHandoffAllowsEmptyHands);
+                ViewmodelPose.INSTANCE.startMainHandExternalPullout(selectedStack, queuedExternalHandoffAllowsEmptyHands);
             }
             if (!queuedExternalHandoffOffhandStack.isEmpty()) {
-                ViewmodelPose.INSTANCE.startOffhandPullout(queuedExternalHandoffOffhandStack);
+                ViewmodelPose.INSTANCE.startOffhandExternalPullout(queuedExternalHandoffOffhandStack);
             }
             queuedExternalHandoffStack = ItemStack.EMPTY;
             queuedExternalHandoffHasMainHand = false;
@@ -304,6 +422,37 @@ public class iteminspectClient {
         queuedExternalHandoffOffhandStack = ItemStack.EMPTY;
         queuedExternalHandoffAllowsEmptyHands = false;
         externalHandoffTicks = 0;
+    }
+
+    private static void resetClientAnimationState() {
+        hasLastMainHandStack = false;
+        hasLastOffhandStack = false;
+        lastSelectedStack = ItemStack.EMPTY;
+        lastOffhandStack = ItemStack.EMPTY;
+        lastBothHandsEmpty = false;
+        dropVanillaFallbackTicks = 0;
+        clearExternalHandoff();
+        ViewmodelPose.INSTANCE.cancelAllAnimations();
+    }
+
+    private static void resetClientAnimationStateFromPlayer(net.minecraft.client.player.LocalPlayer player) {
+        dropVanillaFallbackTicks = 0;
+        clearExternalHandoff();
+        ViewmodelPose.INSTANCE.cancelAllAnimations();
+        if (player == null) {
+            hasLastMainHandStack = false;
+            hasLastOffhandStack = false;
+            lastSelectedStack = ItemStack.EMPTY;
+            lastOffhandStack = ItemStack.EMPTY;
+            lastBothHandsEmpty = false;
+            return;
+        }
+
+        lastSelectedStack = player.getMainHandItem().copy();
+        lastOffhandStack = player.getOffhandItem().copy();
+        lastBothHandsEmpty = lastSelectedStack.isEmpty() && lastOffhandStack.isEmpty();
+        hasLastMainHandStack = true;
+        hasLastOffhandStack = true;
     }
 
     private static boolean isExternalItem(ItemStack stack) {
