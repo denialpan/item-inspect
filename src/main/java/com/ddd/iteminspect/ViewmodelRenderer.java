@@ -56,7 +56,8 @@ public final class ViewmodelRenderer {
         }
 
         boolean leftMainHand = minecraft.player.getMainArm() == HumanoidArm.LEFT;
-        if (!pose.isSharedPlaying() && !pose.isCancelHandBlendActive()) {
+        boolean renderHandsTogether = pose.shouldRenderInspectHandsTogether();
+        if (!renderHandsTogether) {
             if (event.getHand() == InteractionHand.MAIN_HAND) {
                 if (!pose.isMainHandLayerActive()) {
                     return;
@@ -89,7 +90,7 @@ public final class ViewmodelRenderer {
         event.setCanceled(true);
 
         poseStack.pushPose();
-        pose.viewmodelCamera(event.getPartialTick()).apply(poseStack);
+        applyViewmodelCameraCompensation(pose, poseStack, event.getPartialTick());
 
         try {
             EntityRenderer<?> renderer = minecraft.getEntityRenderDispatcher().getRenderer(minecraft.player);
@@ -111,7 +112,7 @@ public final class ViewmodelRenderer {
         Minecraft minecraft = Minecraft.getInstance();
         PoseStack poseStack = event.getPoseStack();
         poseStack.pushPose();
-        boolean itemInLeftHand = mainLayer == leftMainHand;
+        applyViewmodelCameraCompensation(pose, poseStack, event.getPartialTick());
 
         try {
             EntityRenderer<?> renderer = minecraft.getEntityRenderDispatcher().getRenderer(minecraft.player);
@@ -186,6 +187,12 @@ public final class ViewmodelRenderer {
             transform.mirroredTransform().apply(poseStack);
         } else {
             transform.apply(poseStack);
+        }
+    }
+
+    private static void applyViewmodelCameraCompensation(ViewmodelPose pose, PoseStack poseStack, float partialTick) {
+        if (pose.isCameraActive()) {
+            pose.viewmodelCamera(partialTick).applyInverse(poseStack);
         }
     }
 }

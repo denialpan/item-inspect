@@ -462,6 +462,8 @@ def create_scene() -> None:
     block_proxy = add_box("minecraft_block_proxy", (0.0, 0.0, 0.0), (16.0, 16.0, 16.0), block_baked_matrix, block)
 
     offhand_block_preview_matrix = offhand_item_anchor_matrix.copy()
+    add_export_empty("held_block_transform_anchor_firstperson_lefthand", offhand_item_matrix)
+    offhand_block_anchor = add_empty("held_block_transform_anchor_firstperson_lefthand_display", offhand_item_anchor_matrix)
     offhand_block_preview_matrix @= mat_translate(0.0, 0.0, 0.0)
     offhand_block_preview_matrix @= mat_rot_x(0.0)
     offhand_block_preview_matrix @= mat_rot_y(-45.0)
@@ -504,6 +506,7 @@ def create_scene() -> None:
     parent_object_to_bone_preserve_world(block_anchor, viewmodel_armature, "item_root")
     parent_object_to_bone_preserve_world(block_preview_anchor, viewmodel_armature, "item_root")
     parent_object_to_bone_preserve_world(block_baked_origin, viewmodel_armature, "item_root")
+    parent_object_to_bone_preserve_world(offhand_block_anchor, viewmodel_armature, "item_offhand_root")
     parent_object_to_bone_preserve_world(offhand_block_preview_anchor, viewmodel_armature, "item_offhand_root")
     parent_object_to_bone_preserve_world(offhand_block_baked_origin, viewmodel_armature, "item_offhand_root")
     parent_object_to_bone_preserve_world(arm_anchor, viewmodel_armature, "viewmodel_arm_R")

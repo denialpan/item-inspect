@@ -47,6 +47,7 @@ EXPORT_SOURCES = {
     "item_root": "held_item_transform_anchor_firstperson_righthand",
     "item_offhand_root": "held_item_transform_anchor_firstperson_lefthand",
     "block_root": "held_block_transform_anchor_firstperson_righthand",
+    "block_offhand_root": ("held_block_transform_anchor_firstperson_lefthand", "held_item_transform_anchor_firstperson_lefthand"),
     "viewmodel_arm_R": "viewmodel_arm_R_transform_anchor",
     "viewmodel_arm_L": None,
 }
@@ -56,6 +57,7 @@ ANIMATION_SOURCES = {
     "item_root": "held_item_transform_anchor_firstperson_righthand_display",
     "item_offhand_root": "held_item_transform_anchor_firstperson_lefthand_display",
     "block_root": "held_block_transform_anchor_firstperson_righthand_display",
+    "block_offhand_root": ("held_block_transform_anchor_firstperson_lefthand_display", "held_item_transform_anchor_firstperson_lefthand_display"),
     "viewmodel_arm_R": "viewmodel_arm_R_transform_anchor_display",
     "viewmodel_arm_L": "viewmodel_arm_L_transform_anchor_display",
 }
@@ -68,12 +70,24 @@ def evaluated_matrix_world(obj: bpy.types.Object):
     return obj.evaluated_get(depsgraph).matrix_world.copy()
 
 
-def matrix_from_named_source(name: str, source: str | None):
+def first_existing_source(source: str | tuple[str, ...] | None):
+    if source is None:
+        return None
+    if isinstance(source, str):
+        return source if bpy.data.objects.get(source) is not None else None
+    for candidate in source:
+        if bpy.data.objects.get(candidate) is not None:
+            return candidate
+    return None
+
+
+def matrix_from_named_source(name: str, source: str | tuple[str, ...] | None):
     if name == "viewmodel_camera":
         return matrix_from_pose_bone_delta(name)
 
-    if source is not None:
-        obj = bpy.data.objects.get(source)
+    source_name = first_existing_source(source)
+    if source_name is not None:
+        obj = bpy.data.objects.get(source_name)
         if obj is not None:
             return evaluated_matrix_world(obj)
 
@@ -114,13 +128,14 @@ def matrix_from_pose_bone_delta(name: str):
     return AUTHORING_TO_MINECRAFT_MATRIX @ delta_matrix @ AUTHORING_TO_MINECRAFT_MATRIX.inverted()
 
 
-def matrix_for_animation_sample(name: str, source: str | None):
+def matrix_for_animation_sample(name: str, source: str | tuple[str, ...] | None):
     if name == "viewmodel_camera":
         return matrix_from_pose_bone_delta(name)
 
     animation_source = ANIMATION_SOURCES.get(name)
-    if animation_source is not None:
-        obj = bpy.data.objects.get(animation_source)
+    animation_source_name = first_existing_source(animation_source)
+    if animation_source_name is not None:
+        obj = bpy.data.objects.get(animation_source_name)
         if obj is not None:
             return AUTHORING_TO_MINECRAFT_MATRIX @ evaluated_matrix_world(obj)
 
