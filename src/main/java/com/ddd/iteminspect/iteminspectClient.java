@@ -30,6 +30,7 @@ import java.lang.reflect.Method;
 public class iteminspectClient {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final int DROP_VANILLA_FALLBACK_TICKS = 4;
+    private static final int EXTERNAL_HANDOFF_PADDING_TICKS = 0;
     private static boolean hasLastMainHandStack;
     private static ItemStack lastSelectedStack = ItemStack.EMPTY;
     private static boolean lastBothHandsEmpty;
@@ -75,6 +76,10 @@ public class iteminspectClient {
 
     static void onRegisterKeyMappings(RegisterKeyMappingsEvent event) {
         event.register(PLAY_VIEWMODEL_ANIMATION);
+    }
+
+    public static boolean shouldSuppressVanillaHandsForExternalHandoff() {
+        return externalHandoffTicks > 0;
     }
 
     static void onClientPlayerLoggingIn(ClientPlayerNetworkEvent.LoggingIn event) {
@@ -286,8 +291,13 @@ public class iteminspectClient {
             return 0;
         }
 
-        LOGGER.info("TACZ handoff putaway delay for {} is {} ticks", BuiltInRegistries.ITEM.getKey(oldStack.getItem()), putAwayTicks);
-        return putAwayTicks;
+        int paddedTicks = putAwayTicks + EXTERNAL_HANDOFF_PADDING_TICKS;
+        LOGGER.info("TACZ handoff putaway delay for {} is {} ticks + {} padding ticks -> {} ticks",
+                BuiltInRegistries.ITEM.getKey(oldStack.getItem()),
+                putAwayTicks,
+                EXTERNAL_HANDOFF_PADDING_TICKS,
+                paddedTicks);
+        return paddedTicks;
     }
 
     private static int readExternalPutawayTicks(ItemStack oldStack) {

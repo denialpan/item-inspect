@@ -51,6 +51,10 @@ public final class ViewmodelRenderer {
 
         PoseStack poseStack = event.getPoseStack();
         ViewmodelPose pose = ViewmodelPose.INSTANCE;
+        if (iteminspectClient.shouldSuppressVanillaHandsForExternalHandoff()) {
+            event.setCanceled(true);
+            return;
+        }
         if (!pose.isLoaded() || !pose.isPlaying()) {
             return;
         }
